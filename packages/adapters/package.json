@@ -1,0 +1,13 @@
+{
+  "name": "@ownai/adapters",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@ownai/contracts": "workspace:*",
+    "playwright": "^1.64.1"
+  },
+  "devDependencies": { "@ownai/mock-chat": "workspace:*" }
+}

@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+onlyBuiltDependencies:
+  - "@napi-rs/keyring"
+  - "esbuild"

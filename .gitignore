@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.impeccable/review/
+.playwright-mcp/
+*.log
+.env
+.env.*
+!.env.example
+# Local bridge data: SQLite, browser profiles, auth state. Never commit.
+.bridge-data/
+**/browser-profiles/
+**/*.storageState.json
+*.sqlite
+*.sqlite-*

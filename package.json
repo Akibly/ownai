@@ -1,0 +1,26 @@
+{
+  "name": "ownai",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "bridge": "tsx apps/bridge/src/cli.ts",
+    "mock-chat": "tsx apps/mock-chat/src/main.ts",
+    "preview": "tsx scripts/preview-console.ts",
+    "test:console": "tsx scripts/smoke-console.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "browsers:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
