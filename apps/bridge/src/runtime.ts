@@ -12,8 +12,6 @@ import { migrateLegacyDataDir } from "./migrate.ts";
 
 /** Shared wiring for the CLI, the server and the tests, so they cannot drift apart. */
 
-export const DEFAULT_PORT = 8791;
-
 export interface RuntimeOptions {
   /** Root for SQLite and browser profiles. Defaults to the platform OwnAI data directory. */
   dataDir?: string;
@@ -56,7 +54,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     const from = migrateLegacyDataDir(dataDir);
     if (from) options.onNotice?.(`Data migrated from ${from} to ${dataDir}. The old folder is left where it was.`);
   }
-  const port = options.port ?? DEFAULT_PORT;
+  const port = options.port ?? loadConfig().port;
   const store = options.store ?? openStore(dataDir);
   const secrets =
     options.secrets ??

@@ -5,7 +5,7 @@ import { BridgeError } from "@ownai/contracts";
 import { startMockChat, type MockChatServer } from "@ownai/mock-chat";
 import type { BrowserContext, Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { BrowserChatAdapter, MockChatConnector } from "../src/index.ts";
+import { BrowserChatAdapter, MockChatConnector, flattenMessages } from "../src/index.ts";
 
 /**
  * End-to-end for the route-A engine against the project's own controlled test site.
@@ -18,6 +18,7 @@ import { BrowserChatAdapter, MockChatConnector } from "../src/index.ts";
 
 let site: MockChatServer;
 let browser: BrowserChatAdapter;
+let toolBrowser: BrowserChatAdapter;
 
 beforeAll(async () => {
   site = await startMockChat({ chunkDelayMs: 15 });
@@ -26,19 +27,21 @@ beforeAll(async () => {
     profileDir: mkdtempSync(join(tmpdir(), "ownai-profile-")),
     mode: "background",
   });
+  // A second connection with the owner's opt-in on, so both states are exercised.
+  toolBrowser = new BrowserChatAdapter({
+    connector: new MockChatConnector(site.url),
+    profileDir: mkdtempSync(join(tmpdir(), "ownai-profile-tools-")),
+    mode: "background",
+    promptTools: true,
+  });
   // The bridge opens the provider's own page and never submits a credential itself;
   // here the test plays the human's part.
-  await browser.interactiveLogin({
-    headless: true,
-    onPage: async (page: Page) => {
-      await page.getByTestId("login-username").fill("tester");
-      await page.getByTestId("login-submit").click();
-    },
-  });
+  await signInAgain(browser, toolBrowser);
 }, 120_000);
 
 afterAll(async () => {
   await browser.close();
+  await toolBrowser.close();
   await site.close();
 });
 
@@ -92,7 +95,7 @@ describe("browser chat adapter", () => {
     expect(browser.sessionState).toBe("needs_login");
 
     // Re-authenticate for the tests that follow, the way a user would in visible mode.
-    await signInAgain();
+    await signInAgain(browser, toolBrowser);
   }, 90_000);
 
   it("reports a site-side usage limit as quota_exhausted, not as a generic failure", async () => {
@@ -131,7 +134,7 @@ describe("browser chat adapter", () => {
 
   it("declares no tool, vision or sampling support, because the page has none", () => {
     const caps = browser.capabilities();
-    expect(caps.tools).toBe(false);
+    expect(caps.tools).toBe("none");
     expect(caps.vision).toBe(false);
     expect(caps.sampling_params).toEqual([]);
     expect(caps.system_role).toBe("emulated");
@@ -208,12 +211,146 @@ describe("browser chat adapter", () => {
   }, 30_000);
 });
 
-async function signInAgain(): Promise<void> {
-  await browser.interactiveLogin({
-    headless: true,
-    onPage: async (page: Page) => {
-      await page.getByTestId("login-username").fill("tester");
-      await page.getByTestId("login-submit").click();
-    },
+/**
+ * The text protocol that stands in for a tool interface on a site that has none.
+ * The fixture site echoes its prompt, so a test can write the reply the model would
+ * have produced and watch the whole path: offer, type, read, parse.
+ */
+describe("prompt-mediated tools", () => {
+  const weather = { type: "function", function: { name: "get_weather", parameters: { type: "object" } } };
+  const sayCall = 'Answer with exactly this: ```ownai_tool\n{"name":"get_weather","arguments":{"city":"Ankara"}}\n```';
+
+  it("says emulated, never native, about how it does tools", () => {
+    expect(toolBrowser.capabilities().tools).toBe("emulated");
   });
+
+  it("turns a block the page wrote into a call the client can execute", async () => {
+    const result = await toolBrowser.generate(
+      { model: "default", messages: [{ role: "user", content: sayCall }], params: {}, tools: [weather] },
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    expect(result.finish_reason).toBe("tool_calls");
+    expect(result.tool_calls).toHaveLength(1);
+    expect(result.tool_calls?.[0]).toMatchObject({
+      type: "function",
+      function: { name: "get_weather", arguments: '{"city":"Ankara"}' },
+    });
+    // The site echoes its prompt, so the reply carries the instruction text too. Only the
+    // call block the bridge is handing to the client is removed from the prose.
+    expect(result.text).not.toContain('{"name":"get_weather","arguments":{"city":"Ankara"}}');
+    expect(result.text).toContain("Answer with exactly this:");
+    // The instructions themselves are a template, so they must not read as a call.
+    expect(result.tool_calls).toHaveLength(1);
+  }, 60_000);
+
+  it("leaves a reply that asks for nothing as a normal answer", async () => {
+    const result = await toolBrowser.generate(
+      { model: "default", messages: [{ role: "user", content: "no function needed here" }], params: {}, tools: [weather] },
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    expect(result.finish_reason).toBe("stop");
+    expect(result.tool_calls).toBeUndefined();
+    expect(result.text).toContain("no function needed here");
+  }, 60_000);
+
+  it("keeps a block it cannot read in the prose instead of inventing a call", async () => {
+    const result = await toolBrowser.generate(
+      {
+        model: "default",
+        messages: [{ role: "user", content: 'repeat this: ```ownai_tool\n{"name": get_weather, arguments": oops}\n```' }],
+        params: {},
+        tools: [weather],
+      },
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    expect(result.tool_calls).toBeUndefined();
+    expect(result.finish_reason).toBe("stop");
+    expect(result.text).toContain("ownai_tool");
+  }, 60_000);
+
+  it("carries a tool result into the next turn as the model's own format", async () => {
+    await toolBrowser.generate(
+      {
+        model: "default",
+        messages: [
+          { role: "user", content: "weather in Ankara?" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "call_1", type: "function", function: { name: "get_weather", arguments: '{"city":"Ankara"}' } },
+            ],
+          },
+          { role: "tool", content: "22 and clear", tool_call_id: "call_1" },
+        ],
+        params: {},
+        tools: [weather],
+      },
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    // Asserted on what the box received: this fixture site echoes its prompt, so reading
+    // the reply back would show the history's own call block as if the model asked again.
+    expect(site.lastPrompt).toContain("[User]\nweather in Ankara?");
+    expect(site.lastPrompt).toContain('[Assistant]\n```ownai_tool\n{"name":"get_weather","arguments":{"city":"Ankara"}}');
+    expect(site.lastPrompt).toContain("[Tool result get_weather]\n22 and clear");
+  }, 60_000);
+
+  it("refuses a tool_choice a page cannot be made to honour, and spends no turn doing it", async () => {
+    const before = site.promptCount;
+    const err = await failure(() =>
+      toolBrowser.generate(
+        { model: "default", messages: [{ role: "user", content: "hi" }], params: {}, tools: [weather], tool_choice: "required" },
+        { signal: AbortSignal.timeout(10_000) },
+      ),
+    );
+    expect(err.code).toBe("unsupported_feature");
+    expect(err.details.capability).toBe("tool_choice");
+    expect(site.promptCount).toBe(before);
+  }, 30_000);
+
+  it("types no protocol at all when the client says tool_choice none", async () => {
+    const result = await toolBrowser.generate(
+      { model: "default", messages: [{ role: "user", content: "just talk" }], params: {}, tools: [weather], tool_choice: "none" },
+      { signal: AbortSignal.timeout(30_000) },
+    );
+    expect(result.tool_calls).toBeUndefined();
+    expect(result.text).toContain("Echo: just talk");
+    expect(result.text).not.toContain("ownai_tool");
+    // What was typed is the proof: an offered function list would be in the box.
+    expect(site.lastPrompt).toBe("just talk");
+  }, 60_000);
+
+  it("shows the model its own earlier calls in the format it is answering with", () => {
+    const prompt = flattenMessages(
+      [
+        { role: "user", content: "weather in Ankara?" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_9", type: "function", function: { name: "get_weather", arguments: '{"city":"Ankara"}' } }],
+        },
+        { role: "tool", content: "22 and clear", tool_call_id: "call_9" },
+      ],
+      "PROTOCOL",
+    );
+    expect(prompt.startsWith("PROTOCOL")).toBe(true);
+    expect(prompt).toContain('```ownai_tool\n{"name":"get_weather","arguments":{"city":"Ankara"}}\n```');
+    expect(prompt).toContain("[Tool result get_weather]\n22 and clear");
+  });
+});
+
+/**
+ * The test plays the human's part. The site expires every session at once, so a test
+ * that invalidates them has to restore each connection that still has turns to run.
+ */
+async function signInAgain(...adapters: BrowserChatAdapter[]): Promise<void> {
+  for (const adapter of adapters) {
+    await adapter.interactiveLogin({
+      headless: true,
+      onPage: async (page: Page) => {
+        await page.getByTestId("login-username").fill("tester");
+        await page.getByTestId("login-submit").click();
+      },
+    });
+  }
 }

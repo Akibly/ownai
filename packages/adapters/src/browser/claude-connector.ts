@@ -1,7 +1,7 @@
 import { BridgeError, type Consumption, type FinishReason } from "@ownai/contracts";
 import type { Page } from "playwright";
 import { sleep } from "../abort.ts";
-import type { ReadOptions, SiteConnector, SiteReply } from "./site-connector.ts";
+import { typePrompt, type ReadOptions, type SiteConnector, type SiteReply } from "./site-connector.ts";
 
 /**
  * Drives the user's own signed-in claude.ai session, on their own machine, through
@@ -57,6 +57,12 @@ const DEFAULT_SELECTORS: Record<SelectorGroup, string[]> = {
 };
 
 const CHALLENGE_TEXT = ["verify you are human", "checking your browser", "confirm you are not a robot", "unusual traffic"];
+
+/**
+ * The interstitial holds this title while it renders, and its body stays empty until
+ * the check resolves — so the title is the only signal that survives a blank DOM.
+ */
+const CHALLENGE_TITLE = [/^just a moment/i, /^attention required/i, /^verifying (you|your browser)/i, /^one more step/i];
 
 /** A copy of the shipped guesses, so tuning one connection cannot edit them for all. */
 export function claudeSelectorGroups(): Record<SelectorGroup, string[]> {
@@ -140,6 +146,8 @@ export class ClaudeConnector implements SiteConnector {
   async detectChallenge(page: Page): Promise<boolean> {
     if (isChallengeUrl(page.url())) return true;
     if (await this.anyVisible(page, this.selectors.challenge)) return true;
+    const title = (await page.title().catch(() => "")).trim();
+    if (CHALLENGE_TITLE.some((re) => re.test(title))) return true;
     const body = await page
       .locator("body")
       .innerText({ timeout: 2_000 })
@@ -160,7 +168,7 @@ export class ClaudeConnector implements SiteConnector {
     // A rich composer needs real keystrokes; fill() is rejected by contenteditable.
     await composer.click();
     await page.keyboard.press("Control+a").catch(() => {});
-    await page.keyboard.type(prompt, { delay: 0 });
+    await typePrompt(page, prompt);
     // Whatever is in the box is what the provider answers, so a leftover draft would
     // produce a confident reply to the wrong prompt. Verify before pressing Enter.
     const typed = (await composer.innerText().catch(() => "")).replace(/\s+/g, " ").trim();

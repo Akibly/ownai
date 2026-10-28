@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Consumption, ConnectionKind, ModelConfidence, StreamingSupport } from "./capabilities.ts";
+import type { Consumption, ConnectionKind, ModelConfidence, StreamingSupport, ToolSupport } from "./capabilities.ts";
 
 export const SCHEMA_VERSION = "2026-10-26";
 
@@ -70,6 +70,8 @@ export interface BridgeMetadata {
   quota_status: QuotaStatus;
   /** Set on streamed responses: whether chunks reflect real incremental output. */
   streaming?: Exclude<StreamingSupport, "none">;
+  /** How this connection produces tool calls: a real interface, or a text protocol the bridge reads back. */
+  tools?: ToolSupport;
   /** True when a pre-approved fallback served the request instead of the first choice. */
   route_changed: boolean;
   /** "provider" when usage numbers came from the provider; "unavailable" when omitted. */

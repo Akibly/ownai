@@ -1,5 +1,6 @@
 #!/usr/bin/env -s node --experimental-strip-types
 import { readFileSync } from "node:fs";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { API_PRESETS, OpenAiCompatAdapter, presetKind, type ApiPreset } from "@ownai/adapters";
@@ -9,7 +10,13 @@ import { createRuntime } from "./runtime.ts";
 import { envValue, legacyEnvNotice } from "./migrate.ts";
 import { startBridge } from "./server.ts";
 import { servesTraffic, startOfLocalDay, permissionLabel } from "./policy.ts";
-import { BridgeError, type ConnectionRecord, type ConnectionType, type Consumption } from "@ownai/contracts";
+import {
+  BridgeError,
+  type ConnectionOptions,
+  type ConnectionRecord,
+  type ConnectionType,
+  type Consumption,
+} from "@ownai/contracts";
 
 /**
  * The operator's own tool. Everything it can do is local and visible: it creates
@@ -26,15 +33,22 @@ const HELP = `OwnAI (loopback only)
 
   bridge add-claude [--id claude-web] [--alias claude] [--mode automatic]
                     [--plan free|pro|max] [--max-turns-per-day 100]
-                    [--min-interval-seconds 15] --i-am-the-account-owner
+                    [--min-interval-seconds 15] [--prompt-tools]
+                    --i-am-the-account-owner
       Add a route-A connection to your own claude.ai session. The owner flag is
       required and means exactly one thing: you are driving your own account, on
       your own machine, and you accept the provider terms consequences of automated
       access. Without it the router refuses to serve the connection. It grants no
       provider permission and authorizes no other user's traffic.
+      --prompt-tools lets clients that require tools use this connection. The page has
+      no tool interface, so the bridge describes your functions in the prompt and reads
+      a call back out of the reply. Each step is a separate turn of the account's own
+      allowance, and a task that calls tools repeatedly can spend the daily limit in
+      minutes. Off unless you ask for it, and always reported as emulated, never native.
 
   bridge add-web-account <chatgpt|grok|qwen|deepseek> [--id <id>] [--alias <name>]
-                    [--mode visible|automatic|background] --i-am-the-account-owner
+                    [--mode visible|automatic|background] [--prompt-tools]
+                    --i-am-the-account-owner
       Add your own consumer web account as a personal, local browser connection. The
       provider's sign-in page opens visibly when you run bridge login <id>; enter your
       credentials there. Calls use the account's own limits, with local pacing enabled.
@@ -78,6 +92,11 @@ const HELP = `OwnAI (loopback only)
       model_picker, challenge) using the inspect report. No code edit needed; the
       adapter picks the change up on its next request.
 
+  bridge prompt-tools <id> <on|off>
+      Turn the text tool protocol on or off for one browser connection. Config only: it
+      spends no turn and opens no window. The next request rebuilds the adapter, so a
+      running bridge picks it up without a restart.
+
   bridge list | enable <id> | disable <id> | remove <id>
   bridge models | key | curl <alias>
 
@@ -112,6 +131,7 @@ const { values: flags, positionals } = parseArgs({
     "key-env": { type: "string" },
     "key-file": { type: "string" },
     "supports-tools": { type: "boolean" },
+    "prompt-tools": { type: "boolean" },
     "native-streaming": { type: "boolean" },
     "json-mode": { type: "boolean" },
     "sampling-params": { type: "string" },
@@ -163,6 +183,8 @@ async function run(): Promise<void> {
       return inspect();
     case "selectors":
       return setSelectors();
+    case "prompt-tools":
+      return setPromptTools();
     case "list":
       return list();
     case "enable":
@@ -308,10 +330,14 @@ function addClaude(): void {
     ...(flags["max-turns-per-day"] ? { maxTurnsPerDay: Number(flags["max-turns-per-day"]) } : {}),
     ...(flags["min-interval-seconds"] ? { minIntervalMs: Number(flags["min-interval-seconds"]) * 1000 } : {}),
     personalUse: true,
+    ...(flags["prompt-tools"] ? { promptTools: true } : {}),
   });
   runtime.saveConnection(record);
   console.log(`Added ${record.id} as alias "${record.alias}" in ${record.options.mode} mode.`);
   console.log(`Daily local limit ${record.options.max_turns_per_day} turns, minimum ${record.options.min_interval_ms} ms between turns.`);
+  if (record.options.prompt_tools === true) {
+    console.log("Prompt-mediated tools ON: each tool step costs a turn of that allowance.");
+  }
   console.log(`Next: pnpm bridge login ${record.id}   (a visible window opens; you sign in)`);
 }
 
@@ -343,12 +369,16 @@ function addWebAccount(): void {
     alias,
     mode,
     personalUse: true,
+    ...(flags["prompt-tools"] ? { promptTools: true } : {}),
     ...(flags["max-turns-per-day"] ? { maxTurnsPerDay: Number(flags["max-turns-per-day"]) } : {}),
     ...(flags["min-interval-seconds"] ? { minIntervalMs: Number(flags["min-interval-seconds"]) * 1000 } : {}),
   });
   runtime.saveConnection(record);
   console.log(`Added ${record.id} as alias "${record.alias}" (route A, browser:${typedProvider}).`);
   console.log(`Daily local limit ${record.options.max_turns_per_day} turns; minimum interval ${record.options.min_interval_ms} ms.`);
+  if (record.options.prompt_tools === true) {
+    console.log("Prompt-mediated tools ON: each tool step costs a turn of that allowance.");
+  }
   console.log(`Next: pnpm bridge login ${record.id} — a visible window opens for you to sign in.`);
   console.log(`After sign-in, use model "${record.alias}" at http://127.0.0.1:${runtime.port}/v1/chat/completions.`);
 }
@@ -536,7 +566,18 @@ async function login(): Promise<void> {
     console.error(`No connection "${id}".`);
     process.exit(1);
   }
-  await runtime.router.interactiveLogin(id, AbortSignal.timeout(timeoutMs));
+  try {
+    await runtime.router.interactiveLogin(id, AbortSignal.timeout(timeoutMs));
+  } catch (err) {
+    // The deadline is the owner's own pace, not a failure of the site: say so plainly
+    // instead of dumping an abort stack as if the bridge had crashed.
+    if (err instanceof BridgeError && err.code === "timeout") {
+      console.error(`No signed-in session appeared within ${Math.round(timeoutMs / 60_000)} minutes, so the window was closed. Nothing was signed in.`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
   console.log(`Signed in for ${id}. Use "background" or "automatic" mode to keep the window closed.`);
 }
 
@@ -563,7 +604,7 @@ function detachBrave(): void {
   if (!record) return fail(`No connection "${id}".`);
   const { brave_attach: _discarded, ...options } = record.options;
   runtime.saveConnection({ ...record, options, updated_at: new Date().toISOString() });
-  console.log(`${id} will use its isolated OwnAI browser profile after the bridge restarts.`);
+  console.log(`${id} will open ${browserLabel(options)} from now on.`);
 }
 
 async function inspect(): Promise<void> {
@@ -630,15 +671,63 @@ function setSelectors(): void {
   console.log("The adapter rebuilds on its next request; no restart or code edit needed.");
 }
 
+/**
+ * The opt-in switch for the text tool protocol. Config only — it opens no window and
+ * spends no turn, so the owner can weigh the allowance cost before the next request.
+ */
+function setPromptTools(): void {
+  const [id, state] = positionals;
+  if (!id || !state) return fail("Usage: pnpm bridge prompt-tools <connection-id> <on|off>");
+  if (state !== "on" && state !== "off") return fail("Say on or off.");
+  const record = runtime.store.getConnection(id);
+  if (!record) return fail(`No connection "${id}".`);
+  if (!record.type.startsWith("browser:")) {
+    return fail(`"${record.alias}" is not a browser connection; its own API is asked for tool calls directly.`);
+  }
+  if (state === "on") {
+    runtime.saveConnection({
+      ...record,
+      options: { ...record.options, prompt_tools: true },
+      updated_at: new Date().toISOString(),
+    });
+    console.log(`${record.alias}: functions are now described to the page and read back from its reply.`);
+    console.log("Reported as emulated, not native. Every tool step is a separate turn of the daily allowance.");
+  } else {
+    const { prompt_tools: _discarded, ...options } = record.options;
+    runtime.saveConnection({ ...record, options, updated_at: new Date().toISOString() });
+    console.log(`${record.alias}: requests with functions are refused again, as before.`);
+  }
+  console.log("The adapter rebuilds on its next request; no restart or code edit needed.");
+}
+
 function list(): void {
   const records = runtime.store.listConnections();
   if (records.length === 0) return console.log("No connections.");
   for (const record of records) describe(record);
 }
 
+/**
+ * Which browser opens, and whose session it carries. A turn spends whichever sign-in
+ * that profile holds, so the label reads the recorded paths rather than assuming the
+ * isolated default — an OwnAI profile is signed out until someone signs it in.
+ */
+function browserLabel(options: ConnectionOptions): string {
+  if (options.brave_attach === true) return "attached to Brave's default profile";
+  const engine = options.channel
+    ? options.channel
+    : options.executable_path
+      ? basename(options.executable_path).replace(/\.exe$/i, "")
+      : "bundled Chromium";
+  const dir = options.profile_dir;
+  if (!dir) return `${engine}, isolated OwnAI profile`;
+  const rest: string = relative(resolve(runtime.dataDir), resolve(dir));
+  const own = rest.startsWith("..") || isAbsolute(rest) ? "your own browser profile" : "isolated OwnAI profile";
+  return `${engine}, ${own}: ${dir}`;
+}
+
 function describe(record: ConnectionRecord): void {
   const served = servesTraffic(record);
-  const used = runtime.store.countEventsFor(record.id, startOfLocalDay(Date.now()));
+  const used = runtime.store.countTurnsFor(record.id, startOfLocalDay(Date.now()));
   console.log(
     [
       `${record.alias}  (${record.id})`,
@@ -648,7 +737,14 @@ function describe(record: ConnectionRecord): void {
       `  permission  ${record.permission} - ${permissionLabel(record)}`,
       `  personal    ${record.options.personal_use === true ? "acknowledged owner-only use" : "no"}`,
       ...(record.type.startsWith("browser:")
-        ? [`  browser     ${record.options.brave_attach === true ? "attached to Brave's default profile" : "isolated OwnAI profile"}`]
+        ? [
+            `  browser     ${browserLabel(record.options)}`,
+            `  tools       ${
+              record.options.prompt_tools === true
+                ? "prompt-mediated text protocol (each step costs a turn)"
+                : "none: this page has no tool interface"
+            }`,
+          ]
         : []),
       `  serving     ${served ? "yes" : "no (router refuses this connection)"}`,
       `  mode        ${record.options.mode ?? "-"}`,

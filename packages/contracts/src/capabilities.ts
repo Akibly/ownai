@@ -22,6 +22,14 @@ export type ModelConfidence = "verified" | "provider_declared" | "unknown";
 /** native = provider emits incremental output; buffered = one final chunk; none = stream:true rejected. */
 export type StreamingSupport = "native" | "buffered" | "none";
 
+/**
+ * native = the provider has a real tool interface and receives the definitions as such.
+ * emulated = the route has no tool interface, so a text protocol asks the model to emit a
+ * call and the bridge parses it back. Slower and less reliable by nature, so it is always
+ * opt-in and always reported as emulated, never as native.
+ */
+export type ToolSupport = "native" | "emulated" | "none";
+
 export interface AdapterCapabilities {
   text_input: boolean;
   text_output: boolean;
@@ -30,7 +38,7 @@ export interface AdapterCapabilities {
   /** native = provider receives structured turns; flattened = turns are serialized into one prompt. */
   multi_turn: "native" | "flattened";
   streaming: StreamingSupport;
-  tools: boolean;
+  tools: ToolSupport;
   vision: boolean;
   json_mode: boolean;
   /** Request parameters the provider actually honours, e.g. ["max_tokens", "temperature"]. */

@@ -5,6 +5,7 @@ import type {
   FinishReason,
   ModelConfidence,
   QuotaStatus,
+  StreamingSupport,
   ToolCall,
   Usage,
 } from "@ownai/contracts";
@@ -59,6 +60,12 @@ export interface AdapterResult {
   model_confidence: ModelConfidence;
   usage?: Usage;
   quota_status?: QuotaStatus;
+  /**
+   * Only when this turn streamed worse than the connection declares: a native route that
+   * had to hold the text back until a tool block could be read reports "buffered" here,
+   * so the client's label matches the chunks it actually got.
+   */
+  streaming?: Exclude<StreamingSupport, "none">;
 }
 
 export interface AdapterModel {

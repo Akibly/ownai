@@ -35,7 +35,7 @@ The two keys have different jobs: the provider key goes into OwnAI when you add 
 
 OwnAI's built-in API connections pass through function tool definitions, tool-choice settings, assistant tool calls, and tool results. They support multi-turn messages, system instructions, native streaming, and the sampling parameters declared by their provider preset. Compii can therefore run its tools when both the selected OwnAI API connection and its specific model support tool calling. Compii's own capability probe reports whether the model actually used the offered test tool.
 
-Fresh OwnAI installs do not add a mock model. The mock remains available only as an explicit development/test connection. Browser connections do not implement model-generated tool calls. A custom OpenAI-compatible connection also starts with tools disabled. Only enable a capability after checking the custom server's documentation. For example:
+Fresh OwnAI installs do not add a mock model. The mock remains available only as an explicit development/test connection. Browser connections refuse tool definitions until you opt them in, which is described in the next section. A custom OpenAI-compatible connection also starts with tools disabled. Only enable a capability after checking the custom server's documentation. For example:
 
 ```powershell
 pnpm bridge add-api custom `
@@ -54,10 +54,33 @@ If you already added this custom connection without tool support, remove that co
 
 Vision/image input is not currently supported by OwnAI's text adapter. JSON mode is disabled by default. Unsupported features are refused with an error instead of silently dropped. Provider limits, model-specific tool support, and billing remain controlled by the upstream provider.
 
+## Tool calls on a browser connection (opt-in)
+
+A chat website has no tool interface, so OwnAI cannot hand Compii's functions to it the way an API can. If you want Compii's tools to run through claude, grok, qwen or deepseek, the bridge describes your functions inside the prompt and reads a call back out of the reply. That is a different mechanism, so it is reported as `emulated` and never as native, and you switch it on per connection:
+
+```powershell
+pnpm bridge add-claude --i-am-the-account-owner --prompt-tools
+# or for a connection that already exists
+pnpm bridge prompt-tools claude-web on
+pnpm bridge prompt-tools claude-web off
+```
+
+The console has the same switch on the connection card, with a confirmation that says what you are agreeing to.
+
+What that costs, before you turn it on:
+
+- **One turn per step.** Every tool call, and every result you send back, is a separate request to the site. Your daily local limit is 100 turns, 15 seconds apart, so a task that chains five tools is at least ten turns and two and a half minutes of pacing — before the site's own limits.
+- **Reliability is the model's choice.** A call only counts when the reply contains a block naming a function you offered with arguments that parse. Otherwise it stays as text in the answer and no tool runs.
+- **`tool_choice` narrows to `auto` or `none`.** Asking a page to *require* a call is refused rather than faked; the refusal happens before a turn is spent.
+- **It is unverified until you test it on your account.** Each site's layout differs. `pnpm bridge list` prints what each connection currently claims under `tools`, and `GET http://127.0.0.1:8791/v1/bridge/capabilities?connection=<id>` returns the full capability set with the gateway key. Expect to tune selectors with `pnpm bridge inspect <id>` if the page has changed.
+
+Leave it off if Compii can use a route-C connection instead: an API key or a local model passes tools as the provider actually implements them.
+
 ## If Compii's test fails
 
 - **401 / invalid key:** paste the OwnAI gateway key from `pnpm bridge key` into Compii, then save it.
 - **404 / model not found:** use the OwnAI alias, not the upstream provider's raw model ID. Check it with `pnpm bridge models`.
 - **Tool probe says the model did not use tools:** select a model with function-calling support. A successful ordinary chat response alone does not prove tool support.
+- **"This connection cannot call tools":** that alias is a browser route and the opt-in is still off. Turn it on with `pnpm bridge prompt-tools <connection-id> on`, read the cost above first, or point Compii at a route-C connection instead.
 - **Unsupported feature:** check OwnAI's connection capabilities. Browser and mock connections cannot be made into tool-calling models by changing Compii settings.
 - **Connection refused:** keep `pnpm bridge start` running and confirm Compii points to `127.0.0.1` on OwnAI's actual port.

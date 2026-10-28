@@ -23,6 +23,8 @@ export interface MockChatServer {
   setQuotaExhausted(exhausted: boolean): void;
   /** Number of prompts received; lets tests assert a prompt was or was not sent. */
   readonly promptCount: number;
+  /** The last prompt received, so tests can assert what was typed rather than the echo. */
+  readonly lastPrompt: string | undefined;
 }
 
 const MODEL_LABEL = "mock-model-1";
@@ -33,6 +35,7 @@ export async function startMockChat(options: MockChatOptions = {}): Promise<Mock
   let chunkDelayMs = options.chunkDelayMs ?? 20;
   let quotaExhausted = false;
   let promptCount = 0;
+  let lastPrompt: string | undefined;
 
   const server = createServer((req, res) => {
     handle(req, res).catch(() => {
@@ -80,6 +83,7 @@ export async function startMockChat(options: MockChatOptions = {}): Promise<Mock
       const { prompt } = JSON.parse(await readBody(req)) as { prompt?: unknown };
       if (typeof prompt !== "string" || !prompt) return sendJson(res, 400, { error: "empty_prompt" });
       promptCount++;
+      lastPrompt = prompt;
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
       let closed = false;
       res.on("close", () => (closed = true));
@@ -108,6 +112,9 @@ export async function startMockChat(options: MockChatOptions = {}): Promise<Mock
     setQuotaExhausted: (v) => (quotaExhausted = v),
     get promptCount() {
       return promptCount;
+    },
+    get lastPrompt() {
+      return lastPrompt;
     },
   };
 }

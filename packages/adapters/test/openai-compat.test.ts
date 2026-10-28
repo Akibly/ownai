@@ -14,7 +14,7 @@ const CAPS: AdapterCapabilities = {
   system_role: "native",
   multi_turn: "native",
   streaming: "native",
-  tools: true,
+  tools: "native",
   vision: false,
   json_mode: false,
   sampling_params: ["temperature"],

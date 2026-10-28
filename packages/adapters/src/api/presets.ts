@@ -40,7 +40,7 @@ const CAPS = (over: Partial<AdapterCapabilities> = {}): AdapterCapabilities => (
   system_role: "native",
   multi_turn: "native",
   streaming: "native",
-  tools: true,
+  tools: "native",
   // This adapter forwards text parts only, so image parts are refused rather than dropped.
   vision: false,
   // Not separately verified per provider, so a client asking for it is refused.
@@ -169,7 +169,7 @@ export const API_PRESETS: Partial<Record<ConnectionType, ApiPreset>> = {
     capabilities: CAPS({
       // A host we have not read the docs for gets the narrowest honest claim.
       streaming: "buffered",
-      tools: false,
+      tools: "none",
       sampling_params: ["max_tokens", "temperature"],
     }),
     note: "Any OpenAI-style server. Capabilities start minimal: raise them only once proven.",

@@ -168,6 +168,7 @@ export class AdapterRegistry {
       ...(record.options.channel ? { channel: String(record.options.channel) } : {}),
       ...(record.options.executable_path ? { executablePath: String(record.options.executable_path) } : {}),
       ...(record.options.brave_attach === true ? { attachToBrave: true } : {}),
+      ...(record.options.prompt_tools === true ? { promptTools: true } : {}),
     });
   }
 }
@@ -184,7 +185,7 @@ function configuredCapabilities(
   const value = raw as Record<string, unknown>;
   return {
     ...preset,
-    ...(typeof value.tools === "boolean" ? { tools: value.tools } : {}),
+    ...(typeof value.tools === "boolean" ? { tools: value.tools ? ("native" as const) : ("none" as const) } : {}),
     ...(typeof value.json_mode === "boolean" ? { json_mode: value.json_mode } : {}),
     ...(value.streaming === "buffered" || value.streaming === "native" ? { streaming: value.streaming } : {}),
     ...(Array.isArray(value.sampling_params) && value.sampling_params.every((item) => typeof item === "string")

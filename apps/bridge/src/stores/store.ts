@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS events (
   outcome          TEXT NOT NULL,
   duration_ms      INTEGER NOT NULL,
   bytes_in         INTEGER,
-  bytes_out        INTEGER
+  bytes_out        INTEGER,
+  spent_turn       INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts);
 CREATE TABLE IF NOT EXISTS settings (
@@ -87,6 +88,12 @@ export class BridgeStore {
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA foreign_keys = ON;");
     db.exec(MIGRATIONS);
+    // Existing databases predate the turn column. Defaulting old rows to 1 keeps the
+    // limit as strict as it was; only new pre-generation failures are recorded as free.
+    const eventColumns = db.prepare("PRAGMA table_info(events)").all() as unknown as Array<{ name: string }>;
+    if (!eventColumns.some((column) => column.name === "spent_turn")) {
+      db.exec("ALTER TABLE events ADD COLUMN spent_turn INTEGER NOT NULL DEFAULT 1");
+    }
     return new BridgeStore(db);
   }
 
@@ -210,12 +217,14 @@ export class BridgeStore {
     duration_ms: number;
     bytes_in?: number;
     bytes_out?: number;
+    /** False when the request failed before a prompt reached the provider. */
+    spent_turn?: boolean;
   }): void {
     this.db
       .prepare(
         `INSERT INTO events
-         (ts, request_id, connection_id, route, consumption, model_confidence, outcome, duration_ms, bytes_in, bytes_out)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+         (ts, request_id, connection_id, route, consumption, model_confidence, outcome, duration_ms, bytes_in, bytes_out, spent_turn)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         new Date().toISOString(),
@@ -228,6 +237,7 @@ export class BridgeStore {
         event.duration_ms,
         event.bytes_in ?? null,
         event.bytes_out ?? null,
+        event.spent_turn === false ? 0 : 1,
       );
   }
 
@@ -241,6 +251,18 @@ export class BridgeStore {
   countEventsFor(connectionId: string, sinceIso: string): number {
     const row = this.db
       .prepare("SELECT COUNT(*) AS n FROM events WHERE connection_id = ? AND ts >= ?")
+      .get(connectionId, sinceIso) as unknown as { n: number };
+    return Number(row?.n ?? 0);
+  }
+
+  /**
+   * The budget counts turns of the account's allowance, not attempts. A launch that
+   * never reached the provider, or a request refused before a prompt was typed, costs
+   * the account nothing and must not consume the daily limit.
+   */
+  countTurnsFor(connectionId: string, sinceIso: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE connection_id = ? AND ts >= ? AND spent_turn = 1")
       .get(connectionId, sinceIso) as unknown as { n: number };
     return Number(row?.n ?? 0);
   }

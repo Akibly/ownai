@@ -2,7 +2,7 @@ import { BridgeError, type Consumption, type FinishReason } from "@ownai/contrac
 import type { Page } from "playwright";
 import { sleep } from "../abort.ts";
 import { claudeSelectorGroups, type SelectorGroup } from "./claude-connector.ts";
-import type { ReadOptions, SiteConnector, SiteReply } from "./site-connector.ts";
+import { typePrompt, type ReadOptions, type SiteConnector, type SiteReply } from "./site-connector.ts";
 
 /**
  * Personal, visible-browser connectors for consumer chat sites.
@@ -68,9 +68,52 @@ export const ACCOUNT_SITE_DEFINITIONS: Record<AccountSiteDefinition["id"], Accou
 };
 
 const CHALLENGE_TEXT = ["verify you are human", "checking your browser", "confirm you are not a robot", "unusual traffic"];
+/** The interstitial's title survives a blank DOM, which its body often is mid-check. */
+const CHALLENGE_TITLE = [/^just a moment/i, /^attention required/i, /^verifying (you|your browser)/i, /^one more step/i];
 const QUOTA_TEXT = [/usage limit/i, /hit your limit/i, /try again (at|later|in)/i, /you've reached/i, /daily limit/i, /quota/i];
+/**
+ * The sign-in / sign-up controls every one of these sites shows to a visitor who has no
+ * session. They disappear once the page knows who the account is, so their presence is
+ * the difference between a real session and a landing page that merely looks usable.
+ */
+const SIGN_IN_NAME = /^(sign in|sign in to .+|log in|login|sign up|create account|get started)$/i;
+
+async function showsSignInControls(page: Page): Promise<boolean> {
+  const controls = page
+    .getByRole("button", { name: SIGN_IN_NAME })
+    .or(page.getByRole("link", { name: SIGN_IN_NAME }));
+  const count = Math.min(await controls.count().catch(() => 0), 5);
+  for (let index = 0; index < count; index++) {
+    if (await controls.nth(index).isVisible().catch(() => false)) return true;
+  }
+  return false;
+}
+
 const POLL_MS = 250;
 const STABLE_POLLS = 6;
+
+/**
+ * Selector debugging for `OWNAI_DEBUG_BROWSER=1`. Chat sites rename their markup, and
+ * "no reply appeared" alone cannot tell a missing selector from a page that never sent.
+ * Prints element inventory, never credentials; the body tail is the owner's own page.
+ */
+async function debugDom(page: Page, label: string): Promise<void> {
+  if (process.env.OWNAI_DEBUG_BROWSER !== "1") return;
+  try {
+    const info = await page.evaluate(() => {
+      const testids = [...new Set(Array.from(document.querySelectorAll("[data-testid]"), (e) => e.getAttribute("data-testid")))];
+      const classes = [...new Set(Array.from(document.querySelectorAll("div[class],article[class],main[class],section[class]"), (e) => String(e.className)).filter((c) => /message|response|answer|markdown|prose|bubble|chat|assistant/i.test(c)))];
+      const tail = document.body.innerText.slice(-600).replace(/\s+/g, " ");
+      return { testids: testids.slice(-40), classes: classes.slice(0, 25), tail };
+    });
+    console.error(`[browser] ${label} url=${page.url()}`);
+    console.error(`[browser] ${label} testids=${JSON.stringify(info.testids)}`);
+    console.error(`[browser] ${label} classes=${JSON.stringify(info.classes)}`);
+    console.error(`[browser] ${label} body_tail=${JSON.stringify(info.tail)}`);
+  } catch (err) {
+    console.error(`[browser] ${label} dump failed: ${String((err as Error | null)?.message ?? err).split("\n")[0]}`);
+  }
+}
 
 /**
  * The definition's own field names mapped onto the group names `bridge inspect`
@@ -124,13 +167,18 @@ export class AccountSiteConnector implements SiteConnector {
 
   async isSignedIn(page: Page): Promise<boolean> {
     if (/\/(login|sign-in|signin)(?:\/|$)/i.test(new URL(page.url()).pathname)) return false;
-    return (await this.find(page, this.selectors.composer)) !== null;
+    if ((await this.find(page, this.selectors.composer)) === null) return false;
+    // A signed-out landing page ships a composer of its own, so the composer alone
+    // proves nothing. The account controls are what a real session does not show.
+    return !(await showsSignInControls(page));
   }
 
   async detectChallenge(page: Page): Promise<boolean> {
     if (/__cf_chl|\/cdn-cgi\/challenge-platform|\/_sec\/challenge/i.test(page.url())) return true;
     const selectors = [...this.selectors.challenge, 'iframe[src*="challenges.cloudflare.com"]', 'iframe[src*="captcha"]', '[class*="cf-challenge"]'];
     if (await this.anyVisible(page, selectors)) return true;
+    const title = (await page.title().catch(() => "")).trim();
+    if (CHALLENGE_TITLE.some((re) => re.test(title))) return true;
     const body = await page.locator("body").innerText({ timeout: 2000 }).catch(() => "");
     return CHALLENGE_TEXT.some((marker) => body.toLowerCase().includes(marker));
   }
@@ -144,7 +192,7 @@ export class AccountSiteConnector implements SiteConnector {
     const composer = await this.waitForComposer(page);
     await composer.click();
     await page.keyboard.press("Control+a").catch(() => {});
-    await page.keyboard.type(prompt, { delay: 0 });
+    await typePrompt(page, prompt);
     const actual = (await composer.inputValue().catch(() => composer.innerText().catch(() => ""))).replace(/\s+/g, " ").trim();
     const sentinel = prompt.slice(-24).replace(/\s+/g, " ").trim();
     if (!actual.includes(sentinel)) {
@@ -155,6 +203,10 @@ export class AccountSiteConnector implements SiteConnector {
     }
     this.turnAnchor = await this.replyCount(page);
     await page.keyboard.press("Enter");
+    if (process.env.OWNAI_DEBUG_BROWSER === "1") {
+      const left = (await composer.inputValue().catch(() => "")).trim();
+      console.error(`[browser] after-enter composer=${left.length === 0 ? "empty" : `still holds ${left.length} chars`} anchor=${this.turnAnchor}`);
+    }
   }
 
   async readReply(page: Page, { signal, onProgress }: ReadOptions): Promise<SiteReply> {
@@ -223,8 +275,10 @@ export class AccountSiteConnector implements SiteConnector {
           provider: this.displayName,
         });
       }
+      if (attempt > 0 && attempt % 40 === 0) await debugDom(page, `waiting-${(attempt * POLL_MS) / 1000}s`);
       await sleep(POLL_MS, signal);
     }
+    await debugDom(page, "no-reply");
     throw new BridgeError("timeout", `No reply appeared from ${this.displayName}.`, { generation_started: true });
   }
 

@@ -5,12 +5,13 @@ import type { NormalizedMessage } from "@ownai/adapters";
  * TRUTH-3: anything the resolved adapter cannot genuinely do is rejected, never
  * simulated. A caller who asks for tools on a chat-website route gets a clear
  * unsupported_feature, not a silently degraded answer that pretends otherwise.
- * A route that does declare tools passes them through untouched, because the provider
- * — not the bridge — is the authority on whether a call is well formed.
+ * A route that declares tools passes them through; whether the provider receives them
+ * as a real tool interface ("native") or as a text protocol the bridge parses back
+ * ("emulated") is the adapter's business, and it reports which one it is.
  */
 
 export function assertRequestCapabilities(caps: AdapterCapabilities, request: ChatCompletionRequest): void {
-  if ((request.tools?.length || request.tool_choice !== undefined) && !caps.tools) {
+  if ((request.tools?.length || request.tool_choice !== undefined) && caps.tools === "none") {
     reject("tools", "This connection cannot call tools.");
   }
   if (request.response_format !== undefined && !caps.json_mode) {
@@ -58,7 +59,7 @@ export function normalizeMessages(messages: ChatMessage[], caps: AdapterCapabili
   for (const message of messages) {
     const content = flattenContent(message.content);
     const calls = usableToolCalls("tool_calls" in message ? message.tool_calls : undefined);
-    if ((message.role === "tool" || calls) && !caps.tools) {
+    if ((message.role === "tool" || calls) && caps.tools === "none") {
       reject("tools", `Message role "${message.role}" requires tool support this connection does not have.`);
     }
     // "developer" is the newer spelling of the instructions role.

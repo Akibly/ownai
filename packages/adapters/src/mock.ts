@@ -53,7 +53,7 @@ export class MockAdapter implements ProviderAdapter {
       system_role: "native",
       multi_turn: "native",
       streaming: "native",
-      tools: false,
+      tools: "none",
       vision: false,
       json_mode: false,
       sampling_params: ["max_tokens", "max_completion_tokens"],

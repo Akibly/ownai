@@ -300,7 +300,36 @@ export function buildApp(options: StartBridgeOptions): { app: FastifyInstance; r
     return { ok: true, connection: { id: updated.id, alias: updated.alias }, selectors: overrides };
   });
 
-  app.get("/v1/bridge/capabilities", async (req) => {    const connection = (req.query as { connection?: string }).connection;
+  /**
+   * The text tool protocol, opt-in per connection. Config only: it spends no turn and
+   * opens no window, because the cost is in the turns that follow.
+   */
+  app.post("/console/connections/:id/prompt-tools", async (req, reply) => {
+    const id = (req.params as { id?: string }).id;
+    if (!id) throw new BridgeError("invalid_request", "A connection id is required.", { param: "id" });
+    const record = store.getConnection(id);
+    if (!record) throw new BridgeError("invalid_request", `No connection "${id}".`, { param: "id", connection_id: id });
+    if (!record.type.startsWith("browser:")) {
+      throw new BridgeError("invalid_request", `"${record.alias}" is not a browser connection, so it has no page to describe functions to.`, {
+        param: "id",
+        connection_id: id,
+      });
+    }
+    const body = (req.body ?? {}) as { on?: unknown };
+    if (typeof body.on !== "boolean") {
+      throw new BridgeError("invalid_request", 'Provide { "on": true } or { "on": false }.', { param: "on" });
+    }
+    const options = { ...record.options };
+    if (body.on) options.prompt_tools = true;
+    else delete options.prompt_tools;
+    const updated = { ...record, options, updated_at: new Date().toISOString() };
+    store.upsertConnection(updated);
+    reply.header("cache-control", "no-store");
+    return { ok: true, connection: { id: updated.id, alias: updated.alias }, prompt_tools: body.on };
+  });
+
+  app.get("/v1/bridge/capabilities", async (req) => {
+    const connection = (req.query as { connection?: string }).connection;
     if (!connection) {
       return {
         connections: store.listConnections().map((c) => ({
@@ -413,6 +442,7 @@ async function streamCompletion(
   const created = Math.floor(Date.now() / 1000);
   const id = `chatcmpl-${randomUUID()}`;
   let roleSent = false;
+  let toolCallsSent = false;
   const write = (chunk: ChatCompletionChunk) => reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
 
   try {
@@ -434,6 +464,7 @@ async function streamCompletion(
               ],
             });
             roleSent = true;
+            toolCallsSent = true;
             return;
           }
           write({
@@ -464,6 +495,19 @@ async function streamCompletion(
             finish_reason: null,
           },
         ],
+      });
+      roleSent = true;
+    }
+    // A buffered route parses a tool call out of the finished reply, so it arrives here
+    // rather than as a delta the client was never given.
+    const calls = result.choices[0]?.message.tool_calls;
+    if (calls?.length && !toolCallsSent) {
+      write({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model: request.model,
+        choices: [{ index: 0, delta: { tool_calls: calls }, finish_reason: null }],
       });
     }
     write({

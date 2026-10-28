@@ -494,6 +494,122 @@ describe("console selector editor", () => {
 });
 
 /**
+ * The opt-in that lets a tool-calling client use a browser route. Proven here to be
+ * config only: it opens no window, spends no turn, and records no event.
+ */
+describe("prompt-mediated tool setting", () => {
+  const SELF_ORIGIN = "http://127.0.0.1:8791";
+  let harness: Harness;
+  let record: ConnectionRecord;
+
+  beforeEach(async () => {
+    harness = await makeHarness({ connections: [claudeConnection({ personalUse: true })] });
+    record = harness.store.getConnection("claude-web")!;
+  });
+
+  afterEach(async () => {
+    await harness.app.close();
+    harness.store.close();
+  });
+
+  function post(body: unknown, id = record.id, headers: Record<string, string | undefined> = {}) {
+    const requestHeaders: Record<string, string> = {
+      host: "127.0.0.1:8791",
+      authorization: `Bearer ${harness.key}`,
+      origin: SELF_ORIGIN,
+      "content-type": "application/json",
+      ...(headers as Record<string, string>),
+    };
+    for (const [name, value] of Object.entries(headers)) {
+      if (value === undefined) delete requestHeaders[name];
+    }
+    return harness.app.inject({
+      method: "POST",
+      url: `/console/connections/${id}/prompt-tools`,
+      headers: requestHeaders,
+      ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
+    });
+  }
+
+  it("turns the protocol on then off, leaving the rest of the connection alone", async () => {
+    const events = harness.store.recentEvents();
+    const on = await post({ on: true });
+    expect(on.statusCode).toBe(200);
+    expect(on.headers["cache-control"]).toBe("no-store");
+    expect(JSON.parse(on.payload)).toEqual({
+      ok: true,
+      connection: { id: record.id, alias: record.alias },
+      prompt_tools: true,
+    });
+    expect(harness.store.getConnection(record.id)).toEqual({
+      ...record,
+      options: { ...record.options, prompt_tools: true },
+      updated_at: expect.any(String),
+    });
+
+    const off = await post({ on: false });
+    expect(off.statusCode).toBe(200);
+    expect(harness.store.getConnection(record.id)!.options).not.toHaveProperty("prompt_tools");
+    expect(harness.store.recentEvents()).toEqual(events);
+  });
+
+  it.each([
+    { name: "a provider API route", record: apiConnection({ id: "api", type: "free_api:openai", provider: "OpenAI", kind: "free_api", consumption: "free_quota", model: "gpt-4o-mini" }) },
+    { name: "the echo model", record: mockConnection() },
+  ])("refuses $name, which has no page to describe functions to", async ({ record: unsupported }) => {
+    harness.store.upsertConnection(unsupported);
+    const before = harness.store.listConnections();
+    const response = await post({ on: true }, unsupported.id);
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe("invalid_request");
+    expect(harness.store.listConnections()).toEqual(before);
+  });
+
+  it("refuses an unknown connection without creating it", async () => {
+    const before = harness.store.listConnections();
+    const response = await post({ on: true }, "no-such");
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe("invalid_request");
+    expect(harness.store.getConnection("no-such")).toBeUndefined();
+    expect(harness.store.listConnections()).toEqual(before);
+  });
+
+  it.each([
+    { name: "missing body", body: undefined },
+    { name: "null body", body: null },
+    { name: "array body", body: [] },
+    { name: "string body", body: "on" },
+    { name: "empty object", body: {} },
+    { name: "null on", body: { on: null } },
+    { name: "string on", body: { on: "yes" } },
+    { name: "number on", body: { on: 1 } },
+    { name: "object on", body: { on: { value: true } } },
+  ])("rejects a $name before writing it", async ({ body }) => {
+    const response = await post(body);
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.payload).error.code).toBe("invalid_request");
+    expect(harness.store.getConnection(record.id)).toEqual(record);
+  });
+
+  it.each([
+    { name: "missing key", headers: { authorization: undefined }, status: 401, code: "invalid_api_key" },
+    { name: "foreign Origin", headers: { origin: "https://evil.example" }, status: 403, code: "forbidden_origin" },
+    { name: "foreign Host", headers: { host: "evil.example:8791", origin: "http://evil.example:8791" }, status: 403, code: "forbidden_origin" },
+  ])("refuses a $name call that would have changed the setting", async ({ headers, status, code }) => {
+    const response = await post({ on: true }, record.id, headers);
+    expect(response.statusCode).toBe(status);
+    expect(JSON.parse(response.payload).error.code).toBe(code);
+    expect(harness.store.getConnection(record.id)).toEqual(record);
+  });
+
+  it("accepts an authenticated local call with no Origin", async () => {
+    const response = await post({ on: true }, record.id, { origin: undefined });
+    expect(response.statusCode).toBe(200);
+    expect(harness.store.getConnection(record.id)!.options.prompt_tools).toBe(true);
+  });
+});
+
+/**
  * A site connector that records what the engine asked of it. Pointed at about:blank, so
  * the read-only check opens a local window and reaches no provider host.
  */

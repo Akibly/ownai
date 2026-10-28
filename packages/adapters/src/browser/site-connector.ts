@@ -1,6 +1,20 @@
 import type { Consumption, FinishReason } from "@ownai/contracts";
 import type { Page } from "playwright";
 
+/**
+ * Types a prompt into a chat composer. Enter submits on these sites, and
+ * `keyboard.type` presses it for every `\n` — so a multi-line prompt (any tool turn,
+ * or just a prompt with two paragraphs) would be submitted piece by piece. Line
+ * breaks go in as Shift+Enter, which every one of these composers reads as newline.
+ */
+export async function typePrompt(page: Page, prompt: string): Promise<void> {
+  const lines = prompt.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (index > 0) await page.keyboard.press("Shift+Enter");
+    if (line.length > 0) await page.keyboard.type(line, { delay: 0 });
+  }
+}
+
 export interface ReadOptions {
   signal: AbortSignal;
   /** Called with the full reply text observed so far, each time it changes. */

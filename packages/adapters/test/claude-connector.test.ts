@@ -123,6 +123,18 @@ describe("claude connector selectors", () => {
     expect(isChallengeUrl("https://claude.ai/login")).toBe(false);
   });
 
+  it("recognises the interstitial while its body is still empty", async () => {
+    const page = await context.newPage();
+    // Observed live: the title reads "Just a moment..." and the DOM stays blank until the
+    // check resolves, so with no URL marker and no visible widget the title is all we have.
+    await page.setContent("<!doctype html><html><head><title>Just a moment...</title></head><body></body></html>");
+    expect(await new ClaudeConnector().detectChallenge(page)).toBe(true);
+
+    await page.setContent("<!doctype html><html><head><title>Claude</title></head><body></body></html>");
+    expect(await new ClaudeConnector().detectChallenge(page)).toBe(false);
+    await page.close();
+  });
+
   it("reads this turn's reply, not one that was already on the page", async () => {
     const page = await context.newPage();
     await page.setContent(TURN_FIXTURE);

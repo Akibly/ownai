@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { envValue } from "./migrate.ts";
 
 export interface BridgeConfig {
-  /** Loopback port. Default 8787. */
+  /** Loopback port. Default 8791; OWNAI_PORT overrides it, --port overrides both. */
   port: number;
   dataDir: string;
   /** Max JSON body size in bytes. */
@@ -19,6 +19,9 @@ export interface BridgeConfig {
   /** Print one content-free line per request. */
   logRequests: boolean;
 }
+
+/** The port the CLI listens on unless --port or OWNAI_PORT says otherwise. */
+export const DEFAULT_PORT = 8791;
 
 export function defaultDataDir(): string {
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
@@ -37,7 +40,7 @@ function intEnv(name: string, fallback: number): number {
 
 export function loadConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
   return {
-    port: intEnv("OWNAI_PORT", 8787),
+    port: intEnv("OWNAI_PORT", DEFAULT_PORT),
     dataDir: envValue("OWNAI_DATA_DIR") || defaultDataDir(),
     bodyLimit: intEnv("OWNAI_BODY_LIMIT", 1_048_576),
     firstByteTimeoutMs: intEnv("OWNAI_FIRST_BYTE_TIMEOUT_MS", 20_000),

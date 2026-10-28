@@ -49,7 +49,7 @@ export class Router {
   constructor(private readonly options: RouterOptions) {
     const now = options.now ?? Date.now;
     this.budget = new TurnBudget(
-      options.turnsToday ?? ((id) => this.options.store.countEventsFor(id, startOfLocalDay(now()))),
+      options.turnsToday ?? ((id) => this.options.store.countTurnsFor(id, startOfLocalDay(now()))),
       now,
     );
   }
@@ -228,7 +228,9 @@ export class Router {
       usage_source: result.usage ? "provider" : "unavailable",
     };
     // ADR-017: label how the bytes the client sees relate to real provider output.
-    if (capabilities.streaming !== "none") bridge.streaming = capabilities.streaming;
+    if (capabilities.streaming !== "none") bridge.streaming = result.streaming ?? capabilities.streaming;
+    // ADR-020: the same for calls, so an emulated one is never mistaken for a provider tool interface.
+    if (capabilities.tools !== "none") bridge.tools = capabilities.tools;
 
     return {
       id: `chatcmpl-${randomBytes(9).toString("base64url")}`,
@@ -270,6 +272,9 @@ export class Router {
       duration_ms: Date.now() - started,
       bytes_in: bytesIn,
       bytes_out: bytesOut,
+      // Only an error that says the provider had not been reached is free; anything
+      // else either completed or left a prompt the account may be charged for.
+      spent_turn: err === null || !isBridgeError(err) || err.details.generation_started !== false,
     });
   }
 
@@ -280,9 +285,10 @@ export class Router {
   }
 }
 
-/** BridgeMetadata minus the streaming-only field, which is assigned after construction. */
-type BridgeMetadataShape = Omit<ChatCompletionResponse["bridge"], "streaming"> & {
+/** BridgeMetadata minus the fields assigned after construction from the live capability set. */
+type BridgeMetadataShape = Omit<ChatCompletionResponse["bridge"], "streaming" | "tools"> & {
   streaming?: ChatCompletionResponse["bridge"]["streaming"];
+  tools?: ChatCompletionResponse["bridge"]["tools"];
 };
 
 /** Only browser adapters can hand a human a sign-in window. */

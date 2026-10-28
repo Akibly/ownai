@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectionRecord } from "@ownai/contracts";
-import { accountWebConnection, claudeConnection, mockConnection } from "../src/connections.ts";
+import { accountWebConnection, apiConnection, claudeConnection, mockConnection } from "../src/connections.ts";
 import { CONSOLE_JS, maskKey, renderConsole } from "../src/console.ts";
 import { BridgeStore } from "../src/stores/store.ts";
 import { chatRequest, makeHarness } from "./helpers.ts";
@@ -64,6 +64,26 @@ describe("console rendering", () => {
     expect(html).toContain("15 s apart");
     expect(html).toContain("http://127.0.0.1:8791/v1");
     expect(html).toContain("1234 ms");
+  });
+
+  it("names the tool protocol, its cost, and offers the switch only where a page is driven", () => {
+    const off = pageFor([claudeConnection({ personalUse: true })]);
+    expect(off).toContain("no tool interface");
+    expect(off).toContain('data-tools data-on="false"');
+    expect(off).toContain("Offer tools");
+    expect(off).not.toContain("tools: prompt-mediated");
+
+    const on = pageFor([claudeConnection({ personalUse: true, promptTools: true })]);
+    expect(on).toContain("tools: prompt-mediated");
+    expect(on).toContain("one turn of the daily allowance per step");
+    expect(on).toContain('data-tools data-on="true"');
+    expect(on).toContain("Stop offering tools");
+
+    const api = pageFor([
+      apiConnection({ id: "api", type: "free_api:openai", provider: "OpenAI", kind: "free_api", consumption: "free_quota", model: "gpt-4o-mini" }),
+    ]);
+    expect(api).not.toContain("data-tools");
+    expect(api).not.toContain("no tool interface");
   });
 
   it("escapes a value it did not choose, so an alias cannot inject markup", () => {

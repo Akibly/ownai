@@ -13,3 +13,5 @@ coverage/
 **/*.storageState.json
 *.sqlite
 *.sqlite-*
+# Scratch scripts, logs and copied profiles used while probing live sites.
+.probe/

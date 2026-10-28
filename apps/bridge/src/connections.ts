@@ -59,6 +59,12 @@ export interface ClaudeConnectionInput {
   plan?: "free" | "pro" | "max";
   /** Must be explicitly true; without it the router refuses this connection. */
   personalUse: boolean;
+  /**
+   * Ask the page to follow a text protocol in place of a tool interface, so clients that
+   * need tools can use this connection. Off unless the owner says so: every step costs a
+   * turn of the account's own allowance.
+   */
+  promptTools?: boolean;
   maxTurnsPerDay?: number;
   minIntervalMs?: number;
   channel?: string;
@@ -70,6 +76,7 @@ export interface AccountWebConnectionInput {
   alias?: string;
   mode?: "visible" | "background" | "automatic";
   personalUse: boolean;
+  promptTools?: boolean;
   maxTurnsPerDay?: number;
   minIntervalMs?: number;
 }
@@ -102,6 +109,7 @@ export function accountWebConnection(input: AccountWebConnectionInput): Connecti
       plan_declared_by_owner: "free",
       max_turns_per_day: input.maxTurnsPerDay ?? 100,
       min_interval_ms: input.minIntervalMs ?? 15_000,
+      ...(input.promptTools ? { prompt_tools: true } : {}),
     },
   });
 }
@@ -131,6 +139,7 @@ export function claudeConnection(input: ClaudeConnectionInput): ConnectionRecord
       max_turns_per_day: input.maxTurnsPerDay ?? 100,
       min_interval_ms: input.minIntervalMs ?? 15_000,
       ...(input.channel ? { channel: input.channel } : {}),
+      ...(input.promptTools ? { prompt_tools: true } : {}),
     },
   });
 }

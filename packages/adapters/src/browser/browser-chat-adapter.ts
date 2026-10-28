@@ -15,6 +15,7 @@ import type {
   ProviderAdapter,
 } from "../types.ts";
 import type { SiteConnector } from "./site-connector.ts";
+import { buildToolBlock, parseToolReply } from "./tool-protocol.ts";
 
 /**
  * visible:    headed window, for sign-in, debugging and transparency.
@@ -40,6 +41,12 @@ export interface BrowserChatAdapterOptions {
   executablePath?: string;
   /** Attach to the user's default Brave profile using its user-enabled local DevTools port. */
   attachToBrave?: boolean;
+  /**
+   * Offer tool calling as a text protocol, for a site with no tool interface of its
+   * own. Off unless the owner turns it on, because it asks a chat page to follow a
+   * format and a page can decline.
+   */
+  promptTools?: boolean;
   /** Override browser launching (tests). */
   launch?: LaunchFn;
 }
@@ -54,6 +61,9 @@ export interface InteractiveLoginOptions {
 }
 
 const LOGIN_POLL_MS = 250;
+
+/** Long enough for the owner to see Brave's approval prompt and answer it. */
+const ATTACH_APPROVAL_TIMEOUT_MS = 120_000;
 
 export class BrowserChatAdapter implements ProviderAdapter {
   readonly type: string;
@@ -70,6 +80,7 @@ export class BrowserChatAdapter implements ProviderAdapter {
   private attachedBrowser: Browser | null = null;
   private attachedPage: Page | null = null;
   private readonly attachToBrave: boolean;
+  private readonly promptTools: boolean;
   private contextHeadless = true;
   private state: SessionState = "closed";
 
@@ -81,6 +92,7 @@ export class BrowserChatAdapter implements ProviderAdapter {
     this.provider = options.connector.displayName;
     this.consumption = options.connector.consumption;
     this.attachToBrave = options.attachToBrave ?? false;
+    this.promptTools = options.promptTools ?? false;
     this.launchFn = options.launch ?? defaultLaunch(options.channel, options.executablePath);
   }
 
@@ -107,7 +119,7 @@ export class BrowserChatAdapter implements ProviderAdapter {
       system_role: "emulated",
       multi_turn: "flattened",
       streaming: this.connector.streaming,
-      tools: false,
+      tools: this.promptTools ? "emulated" : "none",
       vision: false,
       json_mode: false,
       // Chat UIs do not expose sampling controls, so none are accepted.
@@ -188,13 +200,35 @@ export class BrowserChatAdapter implements ProviderAdapter {
     return result;
   }
 
+  /**
+   * A chat page has no tool interface, so "the model must call this" cannot be
+   * guaranteed and is refused rather than approximated. "none" is honoured by simply
+   * not offering the functions.
+   */
+  private toolInstructions(request: AdapterRequest): string {
+    if (!this.promptTools || !request.tools?.length) return "";
+    if (request.tool_choice === "none") return "";
+    if (request.tool_choice !== undefined && request.tool_choice !== "auto") {
+      throw new BridgeError(
+        "unsupported_feature",
+        'This connection asks the page to follow a text protocol, so it can only honour tool_choice "auto" or "none".',
+        { capability: "tool_choice" },
+      );
+    }
+    return buildToolBlock(request.tools);
+  }
+
   async generate(request: AdapterRequest, ctx: GenerateContext): Promise<AdapterResult> {
+    // Settled before the browser opens: a tool choice this route cannot honour is the
+    // client's to fix, and refusing it should cost neither a window nor a turn.
+    const instructions = this.toolInstructions(request);
     let started = false;
     try {
       return await this.mutex.run(async () => {
         throwIfAborted(ctx.signal, false);
         const page = await this.openPage(this.mode === "visible" ? false : true);
         await this.ensureOnStartPage(page);
+        if (process.env.OWNAI_DEBUG_BROWSER === "1") console.error(`[browser] opened ${page.url()}`);
 
         if (await this.connector.detectChallenge(page)) {
           this.state = "challenge";
@@ -212,18 +246,22 @@ export class BrowserChatAdapter implements ProviderAdapter {
         throwIfAborted(ctx.signal, false);
 
         await this.connector.newConversation(page);
-        await this.connector.submitPrompt(page, flattenMessages(request.messages));
+        await this.connector.submitPrompt(page, flattenMessages(request.messages, instructions));
+        if (process.env.OWNAI_DEBUG_BROWSER === "1") console.error(`[browser] submitted on ${page.url()}`);
         started = true;
 
         const stop = () => void this.connector.stopGeneration(page).catch(() => {});
         ctx.signal.addEventListener("abort", stop, { once: true });
+        // A reply that carries the protocol is withheld until it is parsed: half a JSON
+        // block is not a callable thing, and no client should see raw protocol as prose.
+        const streaming = this.connector.streaming === "native" && instructions.length === 0;
         let emitted = "";
         let rewritten = false;
         try {
           const reply = await this.connector.readReply(page, {
             signal: ctx.signal,
             onProgress: (text) => {
-              if (this.connector.streaming !== "native" || !ctx.onDelta || rewritten) return;
+              if (!streaming || !ctx.onDelta || rewritten) return;
               if (!text.startsWith(emitted)) {
                 rewritten = true;
                 return;
@@ -241,20 +279,35 @@ export class BrowserChatAdapter implements ProviderAdapter {
             });
           }
           const rest = reply.text.slice(emitted.length);
-          if (rest && ctx.onDelta && this.connector.streaming === "native") ctx.onDelta({ text: rest });
+          if (rest && ctx.onDelta && streaming) ctx.onDelta({ text: rest });
 
+          const parsed = instructions ? parseToolReply(reply.text, request.tools ?? []) : undefined;
+          const calls = parsed?.calls ?? [];
+          if (process.env.OWNAI_DEBUG_BROWSER === "1") {
+            console.error(
+              `[browser] reply_len=${reply.text.length} tools=${request.tools?.length ?? 0} instructions=${instructions.length} calls=${calls.length}`,
+            );
+          }
           const label = await this.connector.modelLabel(page);
           return {
-            text: reply.text,
-            finish_reason: reply.finish_reason,
+            text: parsed ? parsed.prose : reply.text,
+            finish_reason: calls.length > 0 ? "tool_calls" : reply.finish_reason,
             model: label ?? request.model,
             model_confidence: label ? "provider_declared" : "unknown",
+            ...(calls.length > 0 ? { tool_calls: calls } : {}),
+            // A native route that had to wait for the whole reply to find a call streamed
+            // as buffered this turn, so the label follows what the client actually got.
+            ...(this.connector.streaming === "native" && instructions.length > 0 ? { streaming: "buffered" as const } : {}),
           } satisfies AdapterResult;
         } finally {
           ctx.signal.removeEventListener("abort", stop);
         }
       }, ctx.signal);
     } catch (err) {
+      if (process.env.OWNAI_DEBUG_BROWSER === "1") {
+        const detail = err as Error | null;
+        console.error(`[browser] generate failed: ${detail?.name ?? "Error"}: ${String(detail?.message ?? err).split("\n")[0]}`);
+      }
       if (ctx.signal.aborted) throw abortError(ctx.signal, started);
       if (isBridgeError(err)) {
         if (err.code === "login_required") this.state = "needs_login";
@@ -335,7 +388,9 @@ export class BrowserChatAdapter implements ProviderAdapter {
           const { chromium } = await import("playwright");
           const browser = await chromium.connectOverCDP(await braveDevToolsEndpoint(), {
             noDefaults: true,
-            timeout: 30_000,
+            // Brave asks the owner to approve each debugger connection, so the wait
+            // includes a person noticing the prompt and clicking it.
+            timeout: ATTACH_APPROVAL_TIMEOUT_MS,
           });
           context = browser.contexts()[0]!;
           if (!context) {
@@ -354,9 +409,22 @@ export class BrowserChatAdapter implements ProviderAdapter {
         this.attachedBrowser = null;
         this.attachedPage = null;
         if (attached) await attached.close().catch(() => {});
+        // Suppressed by default because raw Playwright text can carry profile paths and
+        // command lines; the owner opts in when a failure has no other explanation.
+        if (process.env.OWNAI_DEBUG_BROWSER === "1") {
+          const detail = err as Error | null;
+          console.error(`[browser] ${detail?.name ?? "Error"}: ${String(detail?.message ?? err).split("\n")[0]}`);
+        }
         // An installed browser hands a second launch off to the window that already
         // owns the profile, which otherwise surfaces as an unexplained failure.
         // Playwright's own text carries the whole command line, so report in ours.
+        if (this.attachToBrave && /timeout \d+ms exceeded/i.test(String((err as Error | null)?.message ?? ""))) {
+          throw new BridgeError(
+            "provider_unavailable",
+            "Brave did not answer its debugger port. If Brave is asking whether to allow remote debugging, approve that prompt; otherwise enable the toggle at brave://inspect/#remote-debugging.",
+            { generation_started: false },
+          );
+        }
         if (/existing browser session|already in use/i.test(String((err as Error | null)?.message ?? ""))) {
           throw new BridgeError(
             "provider_unavailable",
@@ -450,13 +518,44 @@ async function braveDevToolsEndpoint(): Promise<string> {
 }
 
 /** Serializes chat turns into one prompt, because chat UIs accept a single message. */
-export function flattenMessages(messages: NormalizedMessage[]): string {
+export function flattenMessages(messages: NormalizedMessage[], instructions = ""): string {
   const only = messages[0];
-  // A browser route declares no tool support, so validation never lets a content-less
-  // tool turn reach this function; the fallback only keeps the types honest.
-  if (messages.length === 1 && only?.role === "user") return only.content ?? "";
+  // One user turn needs no labels. The protocol block forces the full form, because the
+  // model has to be able to tell its own past calls from a user's words.
+  if (messages.length === 1 && only?.role === "user" && instructions.length === 0) return only.content ?? "";
   const label = { system: "Instructions", user: "User", assistant: "Assistant", tool: "Tool result" } as const;
-  return messages.map((m) => `[${label[m.role]}]\n${m.content ?? ""}`).join("\n\n");
+  // A tool turn arrives with only an id, so the name comes from the call it answers.
+  const called = new Map<string, string>();
+  for (const message of messages) for (const call of message.tool_calls ?? []) called.set(call.id, call.function.name);
+
+  const turns = messages.map((message) => {
+    if (message.role === "tool") {
+      const name = message.name ?? (message.tool_call_id ? called.get(message.tool_call_id) : undefined);
+      return `[${label.tool}${name ? ` ${name}` : ""}]\n${message.content ?? ""}`;
+    }
+    // Past calls are written in the same block the model is asked to answer with, so
+    // the history itself shows the format rather than describing it once.
+    const calls = (message.tool_calls ?? [])
+      .map((call) => `\`\`\`ownai_tool\n${JSON.stringify({ name: call.function.name, arguments: asJson(call.function.arguments) })}\n\`\`\``)
+      .join("\n");
+    return [
+      `[${label[message.role]}]`,
+      ...(message.content ? [message.content] : []),
+      ...(calls ? [calls] : []),
+    ].join("\n");
+  });
+
+  const history = turns.join("\n\n");
+  return instructions.length > 0 ? `${instructions}\n\n${history}` : history;
+}
+
+/** Arguments travel as a string; a page reads them best as the object they came from. */
+function asJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
 }
 
 function defaultLaunch(channel: string | undefined, executablePath: string | undefined): LaunchFn {

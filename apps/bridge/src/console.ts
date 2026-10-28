@@ -211,7 +211,7 @@ ${rows}
 
 function card(record: ConnectionRecord, store: BridgeStore, now: number): string {
   const max = record.options.max_turns_per_day ?? DEFAULT_MAX_TURNS_PER_DAY;
-  const used = store.countEventsFor(record.id, startOfLocalDay(now));
+  const used = store.countTurnsFor(record.id, startOfLocalDay(now));
   const budgeted = isPersonalUseWeb(record);
 
   const state = !record.enabled
@@ -225,13 +225,17 @@ function card(record: ConnectionRecord, store: BridgeStore, now: number): string
           // permission line two rows below it.
           pill("serves owner-only use", "warn");
 
+  const browserRoute = record.type.startsWith("browser:");
+  const promptTools = record.options.prompt_tools === true;
+
   return `<div class="card">
 <div class="connection-heading"><h3>${esc(record.alias)}</h3><span class="pill">${record.kind === "mock" ? "Test model" : `Route ${esc(routeOf(record.kind))}`}</span></div>
 <p class="provider">${esc(record.provider)}</p>
-<div class="badges">${state}${record.options.mode ? ` <span class="pill">browser ${esc(record.options.mode)}</span>` : ""}</div>
+<div class="badges">${state}${browserRoute && promptTools ? ` ${pill("tools: prompt-mediated", "warn")}` : ""}${record.options.mode ? ` <span class="pill">browser ${esc(record.options.mode)}</span>` : ""}</div>
 <div class="conn-actions">
 <button type="button" class="action" data-action="${record.enabled ? "disable" : "enable"}" data-connection="${esc(record.id)}">${record.enabled ? "Disable" : "Enable"}</button>
 <button type="button" class="action check" data-test data-connection="${esc(record.id)}">Check</button>
+${browserRoute ? `<button type="button" class="action" data-tools data-on="${promptTools ? "true" : "false"}" data-connection="${esc(record.id)}">${promptTools ? "Stop offering tools" : "Offer tools"}</button>` : ""}
 <span class="state" role="status" aria-live="polite"></span>
 </div>
 ${record.kind === "mock" ? '<p class="hint">A local echo model for testing your client. No provider account or allowance is used.</p>' : ""}
@@ -246,6 +250,7 @@ ${selectorEditor(record)}
   <dt>permission</dt><dd>${esc(permissionLabel(record))}</dd>
   <dt>personal use</dt><dd>${record.options.personal_use === true ? "acknowledged owner-only" : "no"}</dd>
   <dt>pacing</dt><dd>${record.options.min_interval_ms != null ? `${Math.round(record.options.min_interval_ms / 1000)} s apart` : "—"}</dd>
+  ${browserRoute ? `<dt>tool calls</dt><dd>${promptTools ? "prompt-mediated text protocol: one turn of the daily allowance per step" : "none — this page has no tool interface"}</dd>` : ""}
 </dl></details>
 </div>`;
 }
@@ -657,6 +662,43 @@ export const CONSOLE_JS = `(function () {
     });
   }
 
+  // Offers or withdraws the text tool protocol for one browser connection. Turning it
+  // on is confirmed because the cost is not this request but every turn it buys.
+  function runTools(button) {
+    var id = button.getAttribute("data-connection");
+    var on = button.getAttribute("data-on") !== "true";
+    var card = button.closest(".card");
+    var status = card ? card.querySelector(".conn-actions .state") : null;
+    function say(text, bad) {
+      if (status) { status.textContent = text; status.className = bad ? "state bad" : "state"; }
+    }
+    if (on && !window.confirm(
+      "This page has no tool interface, so your functions would be described in the prompt and the call read back" +
+      " from the reply. Each step is a separate turn of the account's daily allowance and its own paced wait." +
+      "\\n\\nOffer tools on this connection?"
+    )) { say("Cancelled", false); return; }
+    button.disabled = true;
+    say(on ? "Turning on…" : "Turning off…", false);
+    readKey().then(function (key) {
+      return fetch("/console/connections/" + encodeURIComponent(id) + "/prompt-tools", {
+        method: "POST",
+        headers: { "content-type": "application/json", "authorization": "Bearer " + key },
+        body: JSON.stringify({ on: on }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10000),
+      });
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (b) { throw new Error((b && b.error && b.error.message) || ("Request failed (" + r.status + ")")); });
+      return r.json();
+    }).then(function () {
+      say("Done. Refreshing…", false);
+      setTimeout(function () { window.location.reload(); }, 400);
+    }).catch(function (err) {
+      say(err && err.message ? err.message : "Could not change this setting.", true);
+      button.disabled = false;
+    });
+  }
+
   // Runs the connection's health check: reachability and sign-in, no prompt, no turn.
   // A browser route first answers "requires_confirmation"; the native confirm is the
   // second explicit step before we open the provider site.
@@ -720,6 +762,7 @@ export const CONSOLE_JS = `(function () {
 
     if (button.hasAttribute("data-action")) { runAction(button); return; }
     if (button.hasAttribute("data-test")) { runTest(button); return; }
+    if (button.hasAttribute("data-tools")) { runTools(button); return; }
 
     if (button.hasAttribute("data-reveal")) {
       if (button.getAttribute("aria-pressed") === "true") { hideKey(); say(button, "Key hidden", false); return; }

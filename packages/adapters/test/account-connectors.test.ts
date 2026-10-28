@@ -42,6 +42,12 @@ const CHAT_SCRIPT = `
   const stop = document.querySelector('[data-testid="stop-button"]');
   let busy = false;
   box.addEventListener('keydown', async (event) => {
+    // Real composers submit on Enter and insert a line break on Shift+Enter.
+    if (event.key === 'Enter' && event.shiftKey) {
+      event.preventDefault();
+      box.value += '\\n';
+      return;
+    }
     if (event.key !== 'Enter' || busy || !box.value) return;
     event.preventDefault();
     const prompt = box.value;
@@ -54,6 +60,8 @@ const CHAT_SCRIPT = `
     conv.appendChild(user);
     const reply = document.createElement('div');
     reply.dataset.messageAuthorRole = 'assistant';
+    // A markdown reply keeps its line breaks; innerText must not flatten a code fence.
+    reply.style.whiteSpace = 'pre-wrap';
     conv.appendChild(reply);
     const body = await (await fetch('/api/prompt', {
       method: 'POST',
@@ -115,6 +123,14 @@ async function startFixture(): Promise<Fixture> {
         return sendHtml(res, chatPage('<textarea id="prompt-textarea" aria-label="Message" readonly></textarea>'));
       case "/altbox":
         return sendHtml(res, chatPage('<textarea data-testid="box" aria-label="Message"></textarea>'));
+      case "/landing":
+        // Live behaviour on grok.com and chat.qwen.ai: a visitor with no session gets a
+        // working-looking composer plus sign-in controls, which the composer check alone
+        // would happily call "signed in".
+        return sendHtml(
+          res,
+          chatPage(TEXTAREA, '<button>Log in</button><button>Sign up</button>'),
+        );
       case "/login":
         return sendHtml(
           res,
@@ -267,6 +283,16 @@ describe("account site connector against a controlled page", () => {
     }
   }, 60_000);
 
+  it("does not mistake a landing page's composer for a signed-in session", async () => {
+    const connector = new AccountSiteConnector(definitionAt(fixture, "/landing"));
+    const page = await on("/landing");
+    try {
+      expect(await connector.isSignedIn(page)).toBe(false);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
   it("submits one turn and reads the finished reply", async () => {
     const connector = new AccountSiteConnector(definitionAt(fixture, "/"));
     const page = await on("/");
@@ -306,6 +332,21 @@ describe("account site connector against a controlled page", () => {
       expect(error.code).toBe("login_required");
       expect(error.details.generation_started).toBe(false);
       expect(fixture.prompts.length).toBe(before);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("recognises the interstitial while its body is still empty", async () => {
+    const connector = new AccountSiteConnector(definitionAt(fixture, "/challenge"));
+    const page = await browser.newPage();
+    try {
+      // No URL marker and no widget yet: the title is the only signal that survives.
+      await page.setContent("<!doctype html><html><head><title>Just a moment...</title></head><body></body></html>");
+      expect(await connector.detectChallenge(page)).toBe(true);
+
+      await page.setContent("<!doctype html><html><head><title>Grok</title></head><body></body></html>");
+      expect(await connector.detectChallenge(page)).toBe(false);
     } finally {
       await page.close();
     }
@@ -410,6 +451,48 @@ describe("account site connector through the route-A engine", () => {
     }
   }, 120_000);
 
+  it("reads a tool call out of the page reply for an account site the owner opted in", async () => {
+    // The four consumer sites share one connector, so the text protocol has to work on
+    // this route too — not only on the Claude one it was built against.
+    const adapter = new BrowserChatAdapter({
+      connector: new AccountSiteConnector(definitionAt(fixture, "/")),
+      profileDir: mkdtempSync(join(tmpdir(), "ownai-account-tools-")),
+      mode: "background",
+      promptTools: true,
+      launch: async () => browser.newContext(),
+    });
+    fixture.setReply('Checking now.\n```ownai_tool\n{"name":"get_weather","arguments":{"city":"Ankara"}}\n```');
+    const before = fixture.prompts.length;
+    try {
+      expect(adapter.capabilities().tools).toBe("emulated");
+      const result = await adapter.generate(
+        {
+          model: "default",
+          messages: [{ role: "user", content: "weather in Ankara?" }],
+          params: {},
+          tools: [
+            {
+              type: "function",
+              function: { name: "get_weather", parameters: { type: "object", properties: { city: { type: "string" } } } },
+            },
+          ],
+        },
+        { signal: AbortSignal.timeout(60_000) },
+      );
+
+      expect(result.tool_calls?.map((call) => call.function.name)).toEqual(["get_weather"]);
+      expect(result.finish_reason).toBe("tool_calls");
+      // The block is handed to the client as a call, never left in the prose.
+      expect(result.text).toBe("Checking now.");
+      // A multi-line prompt is one submission: Enter inside it must not send early.
+      expect(fixture.prompts.slice(before)).toHaveLength(1);
+      expect(fixture.prompts[before]).toContain("ownai_tool");
+      expect(fixture.prompts[before]).toContain("weather in Ankara?");
+    } finally {
+      await adapter.close();
+    }
+  }, 120_000);
+
   it("reports a signed-out site as login_required before any prompt is submitted", async () => {
     const adapter = new BrowserChatAdapter({
       connector: new AccountSiteConnector(definitionAt(fixture, "/login")),
@@ -444,7 +527,7 @@ describe("account site connector through the route-A engine", () => {
     });
     const caps = adapter.capabilities();
     expect(caps.streaming).toBe("buffered");
-    expect(caps.tools).toBe(false);
+    expect(caps.tools).toBe("none");
     expect(caps.vision).toBe(false);
     expect(caps.json_mode).toBe(false);
     expect(caps.sampling_params).toEqual([]);
