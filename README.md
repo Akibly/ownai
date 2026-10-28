@@ -201,6 +201,24 @@ least ten turns and two and a half minutes of local pacing. `tool_choice` is lim
 - `OWNAI_TOTAL_TIMEOUT_MS` (default 120 s) and `OWNAI_FIRST_BYTE_TIMEOUT_MS` (20 s)
   bound a generation; `OWNAI_BODY_LIMIT` bounds the request body.
 
+## Environment variables
+
+OwnAI reads these from the environment; there is no dotenv file. Set them in the shell
+that starts the bridge (or with `--port` / `--data-dir` for the two that have flags).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OWNAI_PORT` | `8791` | Loopback port |
+| `OWNAI_DATA_DIR` | `%LOCALAPPDATA%\OwnAI` / `~/.ownai` | SQLite, browser profiles |
+| `OWNAI_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call the API |
+| `OWNAI_BODY_LIMIT` | `1048576` | Max request body, bytes |
+| `OWNAI_TOTAL_TIMEOUT_MS` | `120000` | Absolute deadline for one generation |
+| `OWNAI_FIRST_BYTE_TIMEOUT_MS` | `20000` | Deadline for the first streamed byte |
+| `OWNAI_EVENT_RETENTION_DAYS` | `7` | How long content-free request events are kept (`0` disables) |
+| `OWNAI_LOG_REQUESTS` | *(off)* | `1` prints one content-free line per request |
+| `OWNAI_DEBUG_BROWSER` | *(off)* | `1` prints browser phases and DOM inventory when a selector misses |
+| `OWNAI_API_KEY` | *(unset)* | Default key source for the `custom` API preset; `--key-env` overrides it |
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
