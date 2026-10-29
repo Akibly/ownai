@@ -162,14 +162,14 @@ Critical-path dependencies: contracts → adapter interface → router → serve
 | R8 | Time-sensitive facts drift (quotas, SIWC preview, MCP spec) | High / medium | Verify against official docs at adapter build time; record check date |
 | R9 | Background mode mistaken for evasion | Med / high | Visible fallback only; no stealth plugins; activity indicator during background runs |
 | R10 | Volume 04 content unknown | Certain / medium | Flagged; revisit when provided |
-| R11 | An app that is not open-source is refused the account-plan grant | Certain / high | Fixed by the AGPL release (D-02); the B connector still stays disabled until the provider approves the specific app |
+| R11 | An app that is not open-source is refused the account-plan grant | Certain / high | Largely lifted by the open-source release (D-02); the B connector still stays disabled until the provider approves the specific app, and its conditions are not satisfied by a license choice alone |
 
 ## 8. Founder decisions
 
 | # | Question | Decision |
 |---|---|---|
 | D-01 | First OS | **Windows** (26 Oct 2026) |
-| D-02 | License | **Proprietary for now** (26 Oct 2026), superseded: published as **AGPL-3.0-or-later** for educational study (28 Oct 2026), with the terms in DISCLAIMER.md |
+| D-02 | License | **Proprietary for now** (26 Oct 2026), superseded: published **MIT OR AGPL-3.0-or-later** at the recipient's option for educational study (28 Oct 2026), with the terms in DISCLAIMER.md and the reasoning in ADR-022 |
 | D-03 | Target users | **Anyone who cannot afford paid AI plans or API billing** (26 Oct 2026) |
 | D-04 | Paid fallback in v1 | None — working default, awaiting founder confirmation |
 | D-05 | Cloud relay in first public release | After local stability — working default, awaiting confirmation |

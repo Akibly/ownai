@@ -1,8 +1,8 @@
 # Disclaimer, intended use, and legal notice
 
-Read this before you run OwnAI. It is the plain-language companion to the license in
-[LICENSE](LICENSE) (GNU AGPL-3.0-or-later), and it is part of how this project is meant
-to be used.
+Read this before you run OwnAI. It is the plain-language companion to the dual license in
+[LICENSE](LICENSE) (MIT **or** GNU AGPL-3.0-or-later, your option), and it is part of how
+this project is meant to be used.
 
 ## 1. Educational and research purpose
 
@@ -65,10 +65,14 @@ with the data-protection rules that apply where you live.
 
 ## 7. Licensing
 
-The code is licensed under the GNU Affero General Public License v3.0 or later. If you
-run a modified version and let other people interact with it over a network, section 13
-of that license requires you to offer them the corresponding source. The full text is in
-[LICENSE](LICENSE); third-party dependencies keep their own licenses.
+You may use this code under **either** the MIT license **or** the GNU Affero General
+Public License v3.0 or later, at your option; [LICENSE](LICENSE) links both full texts.
+Under the AGPL branch, section 13 requires you to offer the corresponding source to anyone
+who interacts with a modified version over a network. Under the MIT branch you may close,
+sublicense and sell your build — and that choice changes nothing in sections 3 and 4
+above: no license grants a provider's permission, and a provider's terms attach to the
+account being signed into, not to your copy of this code. Third-party dependencies keep
+their own licenses.
 
 ## 8. Not legal advice
 

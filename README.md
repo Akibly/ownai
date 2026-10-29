@@ -280,15 +280,21 @@ apps/
 packages/
   contracts/     shared types, capability model, error codes, request schema
   adapters/      provider adapters: OpenAI-compatible API, browser connectors, mock
-LICENSE          GNU AGPL-3.0-or-later
-DISCLAIMER.md    purpose, limits of liability, your account risk, what the code refuses
+LICENSE            dual-license notice: MIT OR AGPL-3.0-or-later
+LICENSE-MIT        MIT, full text
+LICENSE-AGPL-3.0   GNU Affero GPL v3 or later, full text
+DISCLAIMER.md      purpose, limits of liability, your account risk, what the code refuses
 ```
 
 ## License, legal and purpose
 
-- **License:** GNU AGPL-3.0-or-later — see [LICENSE](LICENSE). If you run a modified
-  version and let other people interact with it over a network, section 13 obliges you to
-  offer them the corresponding source.
+- **License:** **MIT OR AGPL-3.0-or-later**, at your option — the notice is in
+  [LICENSE](LICENSE), the texts in [LICENSE-MIT](LICENSE-MIT) and
+  [LICENSE-AGPL-3.0](LICENSE-AGPL-3.0). If you take the AGPL branch and let other people
+  interact with a modified version over a network, section 13 obliges you to offer them
+  the corresponding source. If you take the MIT branch you may close and sell your build,
+  and [DISCLAIMER.md](DISCLAIMER.md) says plainly why that is still not permission from
+  any provider whose account the code can sign into.
 - **Purpose:** educational and research use. Read
   [DISCLAIMER.md](DISCLAIMER.md) first, especially the parts about provider terms,
   account risk, and the single-operator assumption.
