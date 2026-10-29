@@ -8,7 +8,7 @@ Status: Phase 0 output · Prepared 26 Oct 2026 · Covers research volumes 01, 02
 
 ## 1. Executive understanding
 
-OwnAI — written up here under the name it had when this analysis was prepared, BYO AI Bridge — lets a person use AI access they already have — a provider account, a free API quota, or a model on their own machine — through one OpenAI-style local endpoint (`http://localhost:8787/v1/chat/completions`). It is aimed at people who cannot afford pay-as-you-go API billing.
+OwnAI — written up here under the name it had when this analysis was prepared, BYO AI Bridge — lets a person use AI access they already have — a provider account, a free API quota, or a model on their own machine — through one OpenAI-style local endpoint (`http://localhost:8791/v1/chat/completions`). It is aimed at people who cannot afford pay-as-you-go API billing.
 
 The product never supplies, pools or resells accounts. Each response states which route answered, which allowance it consumed, and how certain the model identity is. When a quota runs out, the request fails clearly or moves only to a destination the user approved in advance.
 
@@ -16,9 +16,9 @@ Three routes feed the same contract:
 
 | Route | Source of inference | Release condition |
 |---|---|---|
-| **A — consumer web session** | The user's signed-in chat website, driven by a local browser adapter | Written provider permission for the exact surface (gate A-02 / G0) |
-| **B — official account grant** | A provider-sanctioned OAuth grant (e.g. Sign in with ChatGPT plan usage) | Eligibility + the provider's distribution conditions |
-| **C — free API / local model** | User-owned free-tier keys (Gemini, Groq, OpenRouter…) or Ollama | Documented terms; shippable now |
+| **A — consumer web session** | The user's own signed-in chat website, driven by a local browser adapter | Owner-only personal use on the owner's machine, recorded as an explicit acknowledgement (ADR-018); serving anyone else still needs written provider permission (gate A-02 / G0) |
+| **B — official account grant** | A provider-sanctioned OAuth grant that lets an approved app use an existing plan | Eligibility + the provider's distribution conditions |
+| **C — free API / local model** | User-owned free-tier API keys, or a model runtime on this machine | Documented terms; shippable now |
 
 A is the central architectural objective. All five volumes agree it must be demonstrated against a mock or explicitly approved site and must not be publicly enabled for providers whose terms restrict automation. B and C make the product useful while A permission is pursued.
 
@@ -27,7 +27,7 @@ A is the central architectural objective. All five volumes agree it must be demo
 ### 01 — Research & Feasibility
 - **Thesis:** one OpenAI-style endpoint backed by access the developer already controls; no unlimited-generation promise.
 - **Verdict:** transport, format translation, browser control and relay are technically achievable. The primary risk is *permission*, then UI fragility and user comprehension.
-- **Provider landscape (as of Oct 2026, per S01–S09):** OpenAI and Anthropic consumer terms restrict automated access. Gemini has a genuine API free tier. Ollama provides OpenAI-compatible local inference. **Sign in with ChatGPT** grants plan usage to eligible *local open-source* apps via `/v1/responses` with `store:false`, `stream:true`, explicit context, and several tools excluded.
+- **Provider landscape (as of Oct 2026, per S01–S09):** the consumer terms of the large assistant providers restrict automated access. At least one vendor offers a genuine API free tier. Ollama provides OpenAI-compatible local inference. One provider's **account-plan grant** scopes plan usage to eligible *local, open-source* apps via `/v1/responses` with `store:false`, `stream:true`, explicit context, and several tools excluded; paid or remotely hosted apps must apply for approval.
 - **MCP:** the July 2026 spec deprecated sampling; do not borrow a client's model through MCP as the core engine (S14).
 - **Competitors:** Universal Web API, WebAI-to-API, CLIProxyAPI (A-style, permission unproven), LiteLLM, OpenRouter, Ollama. Differentiation = onboarding, honest capability labels, local credential custody, explicit quota handling.
 - **Feasibility table:** REST facade High; browser framework High *as a framework*; system prompts/tool calls via web Partial; B High where eligible; C High; dashboard High; relay High with effort; full API parity Low for A.
@@ -141,10 +141,10 @@ Critical-path dependencies: contracts → adapter interface → router → serve
 |---|---|---|
 | Local REST facade | High | None required |
 | A browser engine (framework) | High | None for mock/approved targets |
-| A — chatgpt.com / claude.ai connectors | Possible but fragile | **Not permitted** under current consumer terms (S01, S02); not built |
-| B — Sign in with ChatGPT | High where eligible | Docs (checked 26 Oct 2026) scope it to open-source, locally hosted apps; paid or remotely hosted apps must submit an interest form. With the founder's proprietary decision, B-01 is **disabled pending OpenAI approval**. Free-plan eligibility is not stated. |
-| B — Claude consumer plans | No sanctioned route | Requires Anthropic authorization |
-| C — Gemini/Groq/OpenRouter/GitHub Models | High | Documented free tiers; per-route data-use notices |
+| A — consumer-site connectors | Possible but fragile; built for the owner's own session | Serving a third party is **not permitted** under consumer terms (S01, S02). Owner-only personal use is an explicit, labelled acknowledgement (ADR-018), never provider consent |
+| B — a provider's account-plan grant | High where eligible | Docs (checked 26 Oct 2026) scope it to open-source, locally hosted apps; paid or remotely hosted apps must submit an interest form. The grant is unexercised: the B connector stays **disabled pending the provider's approval**. Free-plan eligibility is not stated |
+| B — consumer plans of an assistant provider | No sanctioned route | Requires that provider's written authorization |
+| C — free-tier API providers | High | Documented free tiers; per-route data-use notices |
 | C — Ollama | High | None |
 | Relay | High with effort | Privacy notice; regional data-law review |
 
@@ -162,20 +162,20 @@ Critical-path dependencies: contracts → adapter interface → router → serve
 | R8 | Time-sensitive facts drift (quotas, SIWC preview, MCP spec) | High / medium | Verify against official docs at adapter build time; record check date |
 | R9 | Background mode mistaken for evasion | Med / high | Visible fallback only; no stealth plugins; activity indicator during background runs |
 | R10 | Volume 04 content unknown | Certain / medium | Flagged; revisit when provided |
-| R11 | Proprietary license blocks B | Certain / high | Submit OpenAI interest form; keep B-01 disabled until approved |
+| R11 | An app that is not open-source is refused the account-plan grant | Certain / high | Fixed by the AGPL release (D-02); the B connector still stays disabled until the provider approves the specific app |
 
 ## 8. Founder decisions
 
 | # | Question | Decision |
 |---|---|---|
 | D-01 | First OS | **Windows** (26 Oct 2026) |
-| D-02 | License | **Proprietary for now** (26 Oct 2026) |
+| D-02 | License | **Proprietary for now** (26 Oct 2026), superseded: published as **AGPL-3.0-or-later** for educational study (28 Oct 2026), with the terms in DISCLAIMER.md |
 | D-03 | Target users | **Anyone who cannot afford paid AI plans or API billing** (26 Oct 2026) |
 | D-04 | Paid fallback in v1 | None — working default, awaiting founder confirmation |
 | D-05 | Cloud relay in first public release | After local stability — working default, awaiting confirmation |
 | D-06 | Status code for provider login expiry | 409 `login_required` — working default, awaiting confirmation |
-| D-07 | Real chatgpt.com / claude.ai connectors | Not built; engine is ready if a provider grants permission |
-| Open | Pursue formal partnerships / permission with OpenAI and Anthropic? | Pending |
+| D-07 | Live consumer-site connectors | Built and used only against the owner's own signed-in session (ADR-018). Third-party traffic still needs the provider's written permission |
+| Open | Pursue formal partnerships / written permission with the providers whose consumer surfaces are driven? | Pending |
 | Open | First beta region (affects free-tier eligibility, privacy law) | Pending |
 | Open | Supply volume 04 | Pending |
 
@@ -183,7 +183,7 @@ Critical-path dependencies: contracts → adapter interface → router → serve
 
 1. **Phase 1:** contracts → adapter interface → mock adapter → router → local server with auth → stores → mock chat site → browser engine (background) → tests T01–T04, T08, T14, T17, T18.
 2. **Phase 2:** visible + automatic modes, login-recovery state machine, queue/cancellation hardening, T06/T07.
-3. **Phase 3:** Ollama (C-01), Gemini (C-02), Groq/OpenRouter, quota classifier, fallback consent, B-01 behind disabled gate.
+3. **Phase 3:** local model runtime (C-01), free-tier API providers (C-02), quota classifier, fallback consent, the account-plan connector behind a disabled gate.
 4. **Phase 4:** Tauri desktop shell, connection UI, request tester, Windows installer.
 5. **Phase 5:** dashboard, pairing, gateway keys, relay; T10–T13, T16.
 6. **Phase 6:** MCP facade through the HTTP gateway.

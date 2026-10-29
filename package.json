@@ -2,7 +2,7 @@
   "name": "ownai",
   "version": "0.1.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "engines": {

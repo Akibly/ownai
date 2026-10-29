@@ -12,23 +12,24 @@ Volume 04 was unavailable; no rows cite it.
 | FR-02 | `/v1/models` reflects real connections only | 02 §4 | `apps/bridge/src/routes/models.ts` | `models.test.ts` | ✅ Phase 1 |
 | FR-03 | Key required on loopback | 02 §4; 03 §3; 06 CORE-01 | `apps/bridge/src/security/auth.ts` | `auth.test.ts` T02 | ✅ Phase 1 |
 | FR-04 | A adapter SDK + mock browser adapter E2E | 02 §4; 06 A-01 | `packages/adapters/src/browser/*`, `apps/mock-chat` | `browser-adapter.test.ts` | ✅ Phase 1 (background mode) |
-| FR-05 | B account-plan adapter | 02 §4; 06 B-01 | `packages/adapters/src/openai-siwc` | contract suite | ⛔ awaiting OpenAI approval (D-02) |
-| FR-06 | C: free API + Ollama | 02 §4; 06 C-01/C-02 | `packages/adapters/src/api/{openai-compat,presets}.ts` | `openai-compat.test.ts` | ✅ Phase 3: one OpenAI-compatible adapter + provider presets (OpenAI, xAI, DeepSeek, Qwen, Groq, Gemini, OpenRouter, Mistral, NVIDIA, Ollama, custom) |
+| FR-05 | B account-plan adapter | 02 §4; 06 B-01 | not implemented | contract suite (when built) | ⛔ gated on the provider approving this specific app; no code path exists yet |
+| FR-06 | C: free API + local model | 02 §4; 06 C-01/C-02 | `packages/adapters/src/api/{openai-compat,presets}.ts` | `openai-compat.test.ts` | ✅ Phase 3: one OpenAI-compatible adapter + the presets printed by `pnpm bridge providers` (free-tier API endpoints, a local runtime on this machine, custom base URL) |
 | FR-07 | Quota/error normalization | 02 §4, §6 | `packages/contracts/src/errors.ts` | `errors.test.ts`, T05 | 🟡 Phase 1 enum + mapping; real provider 429 in Phase 3 |
 | FR-08 | Streaming only where genuine | 02 §4; 03 §5 | `apps/bridge/src/routes/chat.ts` | `chat.test.ts` streaming cases | 🟡 Phase 1 (mock native stream; buffered label) |
 | FR-09 | Device enrolment + last-seen | 02 §4 | `apps/dashboard` | relay suite | ⏳ Phase 5 |
 | FR-10 | Remote relay opt-in | 02 §4; J02 | `apps/dashboard`, `apps/bridge/src/relay` | T10, T16 | ⏳ Phase 5 |
 | FR-11 | Scoped gateway keys + revocation | 02 §4; 05 §3 | dashboard keys service | T13 | ⏳ Phase 5 |
 | FR-12 | MCP facade via same policy | 02 §4; 06 MCP-01 | `packages/mcp` | MCP suite | ⏳ Phase 6 |
-| FR-13 | Advanced tools/vision/JSON | 02 §4 | adapters | per-provider | 🟡 P2+: tools plumbed end-to-end for route C (`openai-compat.test.ts`); vision + JSON mode refused until a provider proves them (TRUTH-3) |
+| FR-13 | Advanced tools/vision/JSON | 02 §4; ADR-020 | `packages/adapters/src/api/openai-compat.ts`, `packages/adapters/src/browser/tool-protocol.ts` | `openai-compat.test.ts`, `tool-protocol.test.ts` | 🟡 route C: native tools plumbed end-to-end. Route A: tools `emulated` by the prompt protocol, opt-in per connection, reported as `emulated` in every response and not yet proven on a live site. Vision + JSON mode refused until a provider proves them (TRUTH-3) |
 | FR-14 | Account deletion/export | 02 §4; 05 §6 | dashboard | — | ⏳ Phase 5 |
-| FR-15 | Visible/background/automatic modes | MP §4 | `packages/adapters/src/browser/session.ts` | `browser-adapter.test.ts` | 🟡 Phase 1 background; Phase 2 visible/auto |
-| FR-16 | Isolated profile per connection, one session per profile | 03 §8; MP §4 | `BrowserSessionManager` | `browser-adapter.test.ts` | 🟡 Phase 1 |
+| FR-15 | Visible/background/automatic modes | MP §4 | `packages/adapters/src/browser/session.ts` | `browser-adapter.test.ts`, `account-connectors.test.ts` | 🟡 all three modes implemented, plus interactive sign-in that only the owner can complete; covered against the fixture site, still needing one verified turn per live consumer site |
+| FR-16 | Isolated profile per connection, one session per profile | 03 §8; MP §4 | `BrowserSessionManager` | `browser-adapter.test.ts` | ✅ one profile directory per connection id; a profile already in use fails loudly instead of silently sharing a session |
 | FR-17 | No paid fallback; per-destination consent | 03 §6; 06 ROUTE-01 | `apps/bridge/src/router.ts` | `router.test.ts` T15 | ✅ Phase 1 |
 | FR-18 | Request IDs, cancellation, timeouts | 03 §5, §9 | `apps/bridge/src/routes/chat.ts` | `chat.test.ts` | ✅ Phase 1 |
 | FR-19 | Consumption label on responses | 02 §7 | `packages/contracts` `bridge.consumption` | `chat.test.ts` | ✅ Phase 1 |
-| FR-20 | Connection lifecycle UI | 06 wk 3–5; J04 | loopback console `PATCH/POST /console/connections/:id`, `POST …/test` | `console-actions.test.ts` T24/T25/T27 | 🟡 enable/disable + a read-only provider check shipped (key + same-origin gated; route A needs an explicit confirm); selector tuning works for every browser site through `bridge inspect`/`bridge selectors`; a console selector editor is still pending |
+| FR-20 | Connection lifecycle UI | 06 wk 3–5; J04 | loopback console `PATCH/POST /console/connections/:id`, `POST …/test`, `POST …/selectors`, `POST …/prompt-tools` | `console-actions.test.ts` T24/T25/T27, `console.test.ts` | 🟡 enable/disable, a read-only provider check (key + same-origin gated; route A needs an explicit confirm), a selector editor for every browser group, the prompt-tools opt-in and a request tester ship in the console. Adding and removing a connection is still CLI-only |
 | FR-21 | Connector kill switch | 03 §9; 05 §9 | `permission` field + router | `router.test.ts` T18 | 🟡 local flag Phase 1; remote switch Phase 5 |
+| FR-22 | Local turn budget and pacing per browser connection | 05 §8; ADR-018 | `apps/bridge/src/policy.ts` (`TurnBudget`), `apps/bridge/src/stores/store.ts` (`countTurnsFor`) | `router.test.ts` (cap + spacing), `console.test.ts` (budget shown) | ✅ 100 turns per local day and 15 s apart by default, per connection; refusal happens before a turn is spent and carries `retry_after_s` |
 | SEC-L1 | Loopback-only bind | 03 §3 | `apps/bridge/src/server.ts` | `server.test.ts` | ✅ Phase 1 |
 | SEC-L2 | Host/Origin validation | 03 §3; 05 STRIDE | `security/origin.ts` | `auth.test.ts` T08 | ✅ Phase 1 |
 | SEC-L3 | Body size limit, schema validation | 03 §3 | Fastify `bodyLimit`, Zod | `chat.test.ts` | ✅ Phase 1 |
@@ -40,7 +41,7 @@ Volume 04 was unavailable; no rows cite it.
 | TRUTH-1 | No fabricated token counts | 03 §4; T17 | contracts `usage` optional | `chat.test.ts` T17 | ✅ Phase 1 |
 | TRUTH-2 | Model confidence labelled | 02 §7; ADR-006 | `bridge.model_confidence` | `chat.test.ts` | ✅ Phase 1 |
 | TRUTH-3 | Unsupported features rejected | 03 §5; T04 | chat route capability check | `chat.test.ts` T04 | ✅ Phase 1 |
-| GATE-A | Written permission before live A connector | 06 A-02; 05 §8 | `permission.status` in connection record | `router.test.ts` T18 | ✅ enforced in code |
+| GATE-A | Written permission before an A connector carries anyone but its own account owner | 06 A-02; 05 §8; ADR-018 | `permission.status` + `personal_use` in the connection record, `--i-am-the-account-owner` in the CLI, router | `router.test.ts` T18 | ✅ enforced in code: the owner acknowledgement is stored, labelled and shown; it is not provider consent |
 
 ## Scripted end-to-end cases (06 §5)
 
@@ -66,5 +67,5 @@ Volume 04 was unavailable; no rows cite it.
 | T18 | Provider permission flag disabled | 1 | `apps/bridge/test/router.test.ts` |
 | T24 | Console enable/disable: same-origin accepted, cross-origin + no-key refused | 4 | `apps/bridge/test/console-actions.test.ts` |
 | T25 | Console connection check: route A needs confirm, cross-origin + no-key + disabled refused | 4 | `apps/bridge/test/console-actions.test.ts` |
-| T26 | Account site rules: composer sentinel refuses a turn that did not land, a challenge is handed back untouched, site wording maps to `quota_exhausted`, only this turn's reply is read, owner selectors replace a group | 21 | `packages/adapters/test/account-connectors.test.ts` |
+| T26 | Account site rules: composer sentinel refuses a turn that did not land, a challenge is handed back untouched, site wording maps to `quota_exhausted`, only this turn's reply is read, owner selectors replace a group, and a landing page that shows sign-in controls is never reported as a session | 2 | `packages/adapters/test/account-connectors.test.ts` |
 | T27 | Read-only probe: consults the site without submitting, closes the window it opened, and separates signed-in / signed-out / challenge / browser-will-not-open | 5 | `packages/adapters/test/account-connectors.test.ts`, `apps/bridge/test/console-actions.test.ts` |

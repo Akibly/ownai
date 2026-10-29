@@ -3,6 +3,11 @@
 One local, OpenAI-compatible endpoint for AI access you already have: your own free
 consumer accounts, an API key with free quota, or a model running on this machine.
 
+> **Educational project.** Published to study how a local gateway, provider adapters and
+> browser automation fit together. Read [DISCLAIMER.md](DISCLAIMER.md) before you run a
+> browser connection: automated access to a consumer site may breach that site's terms,
+> and the risk is the account owner's. Not affiliated with, or endorsed by, any provider.
+
 OwnAI listens on loopback only (`127.0.0.1`), speaks `/v1/chat/completions` and
 `/v1/models`, and records nothing about what you ask beyond content-free request
 metadata. It exists for people who cannot pay per-token billing, not to resell access.
@@ -41,17 +46,22 @@ pnpm browsers:install   # only for browser routes on an isolated profile
 pnpm bridge start
 
 # 2. Add a connection (three shapes; see "Routes" below).
-pnpm bridge add-web-account grok  --i-am-the-account-owner   # your own account (route A)
-pnpm bridge add-api openai        # an API key from the provider   (route C)
+pnpm bridge add-web-account <site>  --i-am-the-account-owner   # your own account (route A)
+pnpm bridge add-api <provider>      # an API key from the provider   (route C)
 #    or use a model on this machine:
 #    pnpm bridge add-api custom --base-url http://127.0.0.1:11434/v1 --alias local
 
 # 3. For a browser route, open the site and sign in yourself.
-pnpm bridge login grok-web
+pnpm bridge login <connection-id>
 
 # 4. Point any OpenAI client at it.
-pnpm bridge curl grok          # a ready-made curl command for that alias
+pnpm bridge curl <alias>       # a ready-made curl command for that alias
 ```
+
+`add-web-account` takes the site ids printed by `pnpm bridge --help` — the consumer chat
+sites that ship with a connector today. One site has its own command, `add-claude`,
+because it carries a different permission record and plan declaration. `pnpm bridge
+providers` lists the API providers for route C.
 
 `pnpm bridge start` serves:
 
@@ -68,14 +78,17 @@ Override the port with `--port <n>` or `OWNAI_PORT`; data lives in
 
 | Route | Kind | What it is | What a turn costs |
 | --- | --- | --- | --- |
-| A | `consumer_web` | Drives your own signed-in session at claude.ai / grok.com / chat.qwen.ai / chat.deepseek.com in a real browser | One turn of that account's own allowance, paced locally |
+| A | `consumer_web` | Drives your own signed-in session at a consumer chat site in a real browser | One turn of that account's own allowance, paced locally |
 | B | `account_grant` | Official account-grant integrations | Per provider terms |
 | C | `free_api` / `local_model` | A documented OpenAI-compatible API key, or a model on this machine | The provider's quota, or your own compute |
 | test | `mock` | A local echo model for client testing | Nothing |
 
 Route A is the flexible one and the fragile one: it reads page layout, so a site
 redesign needs selector tuning (see [When a site changes](#when-a-site-changes)).
-Routes B and C are the reliable baseline.
+Routes B and C are the reliable baseline. A router refuses traffic for every consumer
+route until the connection carries the owner's `--i-am-the-account-owner`
+acknowledgement, and the recorded permission stays `denied`; see
+[DISCLAIMER.md](DISCLAIMER.md) for what that means.
 
 ## Signing in
 
@@ -86,15 +99,17 @@ pnpm bridge login <connection-id> [--timeout-minutes 15]
 A visible window opens on the provider's own site. Sign in there; OwnAI polls until a
 real signed-in session appears, then reports it. Two details that matter:
 
-- **A landing page is not a session.** grok.com and chat.qwen.ai show a working-looking
-  composer to visitors who are signed out. OwnAI treats a visible "Sign in / Log in /
-  Sign up" control as signed out, so `login` will keep waiting and a turn will report
-  `login_required` instead of submitting into the void.
+- **A landing page is not a session.** Consumer chat sites routinely show a
+  working-looking composer to visitors who are signed out. OwnAI treats a visible
+  "Sign in / Log in / Sign up" control as signed out, so `login` will keep waiting and a
+  turn will report `login_required` instead of submitting into the void.
 - **The window is closed when it times out**, and nothing is signed in. Re-run the
   command when you are ready.
 
-Browser connections have three modes: `visible` (watch every turn), `automatic`
-(headless, window closed between turns) and `background` (headless, quiet).
+Browser connections have three modes: `visible` (a headed window, so you watch every
+turn), `background` (headless, same isolated profile) and `automatic` — the default,
+headless like background but stopping with `login_required` the moment the site wants a
+human, instead of waiting on a window you cannot see. No mode attempts a check itself.
 
 ### Attaching to your own Brave (Windows)
 
@@ -116,8 +131,8 @@ launch to the running instance.
 | Command | Purpose |
 | --- | --- |
 | `pnpm bridge start [--port n] [--data-dir dir]` | Run the gateway |
-| `pnpm bridge add-claude --i-am-the-account-owner [--prompt-tools]` | Route-A claude.ai connection |
-| `pnpm bridge add-web-account <chatgpt\|grok\|qwen\|deepseek> [--mode …]` | Route-A consumer connection |
+| `pnpm bridge add-claude --i-am-the-account-owner [--prompt-tools]` | Route-A connection for the site that declares a plan (separate permission record) |
+| `pnpm bridge add-web-account <site> [--mode …]` | Route-A consumer connection; `pnpm bridge --help` prints the current site ids |
 | `pnpm bridge add-api [provider] [--base-url …] [--alias …]` | Route-C connection; key goes to the OS keychain |
 | `pnpm bridge providers` | Route-C presets and what each costs |
 | `pnpm bridge login <id>` | Open the sign-in page for you |
@@ -136,7 +151,7 @@ launch to the running instance.
 curl http://127.0.0.1:8791/v1/chat/completions \
   -H "Authorization: Bearer <gateway key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude","messages":[{"role":"user","content":"hello"}]}'
+  -d '{"model":"<alias>","messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ```python
@@ -144,14 +159,14 @@ from openai import OpenAI
 
 client = OpenAI(base_url="http://127.0.0.1:8791/v1", api_key="<gateway key>")
 print(client.chat.completions.create(
-    model="claude",
+    model="<alias>",
     messages=[{"role": "user", "content": "hello"}],
 ).choices[0].message.content)
 ```
 
 Ask for the model **alias**, not the provider's raw model id. `pnpm bridge models`
-lists what each connection answers to (for example `claude/default`,
-`compii-brain/qwen3:4b`).
+lists what each connection answers to (for example `<alias>/default` for a site that
+chooses its own model, or `<alias>/<model-id>` for a preset that reports its list).
 
 ## Capability labels
 
@@ -236,8 +251,8 @@ that starts the bridge (or with `--port` / `--data-dir` for the two that have fl
 
 ```bash
 OWNAI_DEBUG_BROWSER=1 pnpm bridge start   # one line per phase, DOM inventory on a miss
-pnpm bridge inspect grok-web              # read-only: selectors present + inventory
-pnpm bridge selectors grok-web composer  'textarea[aria-label*="Ask"]'
+pnpm bridge inspect <connection-id>       # read-only: selectors present + inventory
+pnpm bridge selectors <connection-id> composer 'textarea[aria-label*="Ask"]'
 ```
 
 Selector overrides are stored per connection, take effect on the next request, and are
@@ -265,10 +280,25 @@ apps/
 packages/
   contracts/     shared types, capability model, error codes, request schema
   adapters/      provider adapters: OpenAI-compatible API, browser connectors, mock
+LICENSE          GNU AGPL-3.0-or-later
+DISCLAIMER.md    purpose, limits of liability, your account risk, what the code refuses
 ```
+
+## License, legal and purpose
+
+- **License:** GNU AGPL-3.0-or-later — see [LICENSE](LICENSE). If you run a modified
+  version and let other people interact with it over a network, section 13 obliges you to
+  offer them the corresponding source.
+- **Purpose:** educational and research use. Read
+  [DISCLAIMER.md](DISCLAIMER.md) first, especially the parts about provider terms,
+  account risk, and the single-operator assumption.
+- **No affiliation:** the project is not affiliated with, authorized by, or endorsed by
+  any provider whose site or API it can reach. Provider names appear only where a
+  command argument, a host, or a selector has to name one.
 
 ## Further reading
 
+- [DISCLAIMER.md](DISCLAIMER.md) — intended use, your risk, and the enforced refusals
 - [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md) — every ADR, including the
   tri-state capability model, prompt-mediated tools, and honest streaming labels
 - [COMPII.md](COMPII.md) — wiring Compii to OwnAI, including tools and the failure modes

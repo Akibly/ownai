@@ -56,13 +56,14 @@ Vision/image input is not currently supported by OwnAI's text adapter. JSON mode
 
 ## Tool calls on a browser connection (opt-in)
 
-A chat website has no tool interface, so OwnAI cannot hand Compii's functions to it the way an API can. If you want Compii's tools to run through claude, grok, qwen or deepseek, the bridge describes your functions inside the prompt and reads a call back out of the reply. That is a different mechanism, so it is reported as `emulated` and never as native, and you switch it on per connection:
+A chat website has no tool interface, so OwnAI cannot hand Compii's functions to it the way an API can. If you want Compii's tools to run through a route-A browser connection, the bridge describes your functions inside the prompt and reads a call back out of the reply. That is a different mechanism, so it is reported as `emulated` and never as native, and you switch it on per connection:
 
 ```powershell
-pnpm bridge add-claude --i-am-the-account-owner --prompt-tools
+# when you create the connection
+pnpm bridge add-web-account <site> --id <connection-id> --i-am-the-account-owner --prompt-tools
 # or for a connection that already exists
-pnpm bridge prompt-tools claude-web on
-pnpm bridge prompt-tools claude-web off
+pnpm bridge prompt-tools <connection-id> on
+pnpm bridge prompt-tools <connection-id> off
 ```
 
 The console has the same switch on the connection card, with a confirmation that says what you are agreeing to.
